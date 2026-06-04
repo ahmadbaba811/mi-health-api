@@ -5,7 +5,13 @@ const cors = require('cors');
 const { pool, poolConnect, sql } = require('./src/db');
 
 const usersRouter = require('./src/routes/users');
-const authRouter = require('./src/routes/auth')
+const authRouter = require('./src/routes/auth');
+const addOnsRouter = require('./src/routes/add-ons');
+const servicesRouter = require('./src/routes/services');
+const labsRouter = require('./src/routes/labs');
+const timeSlotsRouter = require('./src/routes/time-slots');
+const bookingsRouter = require('./src/routes/bookings');
+const equipmentRouter = require('./src/routes/equipment');
 
 const app = express();
 app.use(helmet());
@@ -18,6 +24,12 @@ app.get('/', (req, res) => {
 
 app.use('/users', usersRouter);
 app.use('/auth', authRouter);
+app.use('/add-ons', addOnsRouter);
+app.use('/services', servicesRouter);
+app.use('/labs', labsRouter);
+app.use('/time-slots', timeSlotsRouter);
+app.use('/bookings', bookingsRouter);
+app.use('/equipment', equipmentRouter);
 
 const port = parseInt(process.env.PORT, 10);
 
