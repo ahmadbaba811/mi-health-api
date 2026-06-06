@@ -67,15 +67,16 @@ async function logFailedLogin(email, reason) {
 }
 
 // Log successful login
-async function logSuccessfulLogin(userId) {
+async function logSuccessfulLogin(userId, email) {
   try {
     const request = pool.request();
-    request.input('user_id', sql.VarChar(50), userId);
+    request.input('userId', sql.Int, userId);
+    request.input('email', sql.VarChar(255), email);
     request.input('timestamp', sql.DateTime, new Date());
 
     await request.query(`
-      INSERT INTO login_attempts (user_id, success, timestamp)
-      VALUES (@user_id, 1, @timestamp)
+      INSERT INTO login_attempts (userId, success, timestamp, email)
+      VALUES (@userId, 1, @timestamp, @email)
     `);
   } catch (err) {
     console.error('Error logging successful login:', err);
@@ -95,7 +96,7 @@ async function isAccountLocked(email) {
       FROM login_attempts 
       WHERE email = @email 
         AND success = 0 
-        AND timestamp > DATEADD(MINUTE, -@timeWindow, GETUTC())
+        AND timestamp > DATEADD(MINUTE, -@timeWindow, GETUTCDATE())
     `);
 
     return result.recordset[0].failedAttempts >= 5;
@@ -127,7 +128,8 @@ router.post('/login',  async (req, res) => {
     if (await isAccountLocked(sanitizedEmail)) {
       await logFailedLogin(sanitizedEmail, 'Account locked due to too many failed attempts');
       return res.status(429).json({
-        error: 'Account temporarily locked. Please try again in 15 minutes.'
+        error: 'temporarily locked',
+        message: 'Account temporarily locked. Please try again in 15 minutes.'
       });
     }
 
@@ -136,8 +138,7 @@ router.post('/login',  async (req, res) => {
     request.input('email', sql.VarChar(255), sanitizedEmail);
 
     const result = await request.query(`
-      SELECT id, email, password_hash, is_active 
-      FROM Users 
+      SELECT id, email, passwordHash, isActive, firstName, lastName FROM Users 
       WHERE email = @email
     `);
 
@@ -145,22 +146,23 @@ router.post('/login',  async (req, res) => {
     if (result.recordset.length === 0) {
       await logFailedLogin(sanitizedEmail, 'User not found');
       return res.status(401).json({
-        error: 'Invalid email or password' // Generic message for security
+        error: 'Invalid email or password'
       });
     }
 
     const user = result.recordset[0];
 
     // Check if account is active
-    if (!user.is_active) {
+    if (!user.isActive) {
       await logFailedLogin(sanitizedEmail, 'Inactive account');
       return res.status(403).json({
-        error: 'Account is inactive. Please contact support.'
+        error: 'inactive',
+        message: 'Account is inactive. Please contact support.'
       });
     }
 
     // Compare password with hash
-    const passwordMatch = await bcrypt.compare(password, user.password_hash);
+    const passwordMatch = await bcrypt.compare(password, user.passwordHash);
 
     if (!passwordMatch) {
       await logFailedLogin(sanitizedEmail, 'Invalid password');
@@ -184,7 +186,7 @@ router.post('/login',  async (req, res) => {
     );
 
     // Log successful login
-    await logSuccessfulLogin(user.id);
+    await logSuccessfulLogin(user.id, email);
 
     // Return success with token
     res.status(200).json({
@@ -193,7 +195,9 @@ router.post('/login',  async (req, res) => {
       token: token,
       user: {
         id: user.id,
-        email: user.email
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName
       }
     });
 
@@ -201,7 +205,8 @@ router.post('/login',  async (req, res) => {
     console.error('Error during login:', err);
     // Never expose internal errors to client
     res.status(500).json({
-      error: 'An error occurred during login. Please try again later.'
+      error: "error occured",
+      message: 'An error occurred during login. Please try again later.'
     });
   }
 });
@@ -243,9 +248,9 @@ async function isEmailRegistered(email) {
 // POST /register - Account creation endpoint
 router.post('/register', async (req, res) => {
 
-  const { email, password, confirm_password, first_name, last_name, phone, address } = req.body;
+  const { email, password, confirmPassword, firstName, lastName, phone, address } = req.body;
 
-  const validationErrors = validateRegisterInput(email, password, confirm_password);
+  const validationErrors = validateRegisterInput(email, password, confirmPassword);
   if (validationErrors.length > 0) {
     return res.status(400).json({
       error: 'Invalid registration data',
@@ -265,16 +270,16 @@ router.post('/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
     const request = pool.request();
     request.input('email', sql.VarChar(255), sanitizedEmail);
-    request.input('password_hash', sql.VarChar(512), passwordHash);
-    request.input('is_active', sql.Bit, 1);
-    request.input('first_name', sql.VarChar(255), first_name);
-    request.input('last_name', sql.VarChar(255), last_name);
+    request.input('passwordHash', sql.VarChar(512), passwordHash);
+    request.input('isActive', sql.Bit, 1);
+    request.input('firstName', sql.VarChar(255), firstName);
+    request.input('lastName', sql.VarChar(255), lastName);
     request.input('phone', sql.VarChar(255), phone);
     request.input('address', sql.VarChar(255), address);
 
     await request.query(`
-      INSERT INTO Users (email, first_name, last_name, phone, address, password_hash, is_active, created_at)
-      VALUES (@email, @first_name, @last_name, @phone, @address, @password_hash, @is_active, SYSUTCDATETIME())
+      INSERT INTO Users (email, firstName, lastName, phone, address, passwordHash, isActive, createdAt)
+      VALUES (@email, @firstName, @lastName, @phone, @address, @passwordHash, @isActive, SYSUTCDATETIME())
     `);
 
     const fetchRequest = pool.request();

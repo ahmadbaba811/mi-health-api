@@ -7,8 +7,8 @@ router.get('/', async (req, res) => {
   try {
     const request = pool.request();
     const result = await request.query(`
-      SELECT id, name, price, requiresScheduling, description 
-      FROM PremiumAddOns 
+      SELECT CAST(id AS VARCHAR(20)) AS id, name, price, requiresScheduling, description 
+      FROM lk_add_ons 
       ORDER BY price ASC
     `);
 
@@ -27,7 +27,7 @@ router.get('/:id', async (req, res) => {
 
     const result = await request.query(`
       SELECT id, name, price, requiresScheduling, description 
-      FROM PremiumAddOns 
+      FROM lk_add_ons 
       WHERE id = @id
     `);
 
@@ -59,7 +59,7 @@ router.post('/', async (req, res) => {
     request.input('description', sql.VarChar(sql.MAX), description || '');
 
     await request.query(`
-      INSERT INTO PremiumAddOns (id, name, price, requiresScheduling, description)
+      INSERT INTO lk_add_ons (id, name, price, requiresScheduling, description)
       VALUES (@id, @name, @price, @requiresScheduling, @description)
     `);
 
@@ -83,7 +83,7 @@ router.put('/:id', async (req, res) => {
     request.input('description', sql.VarChar(sql.MAX), description || '');
 
     await request.query(`
-      UPDATE PremiumAddOns 
+      UPDATE lk_add_ons 
       SET name = @name, price = @price, requiresScheduling = @requiresScheduling, description = @description
       WHERE id = @id
     `);
@@ -101,7 +101,7 @@ router.delete('/:id', async (req, res) => {
     const request = pool.request();
     request.input('id', sql.VarChar(50), req.params.id);
 
-    await request.query('DELETE FROM PremiumAddOns WHERE id = @id');
+    await request.query('DELETE FROM lk_add_ons WHERE id = @id');
 
     res.json({ message: 'Add-on deleted successfully' });
   } catch (err) {
