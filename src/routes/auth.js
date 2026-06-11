@@ -308,6 +308,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
+
 // POST /logout - Optional logout endpoint (invalidate token on client side)
 router.post('/logout', (req, res) => {
   // JWT tokens are stateless, so logout is handled on client by removing token

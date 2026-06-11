@@ -12,6 +12,7 @@ const labsRouter = require('./src/routes/labs');
 const timeSlotsRouter = require('./src/routes/time-slots');
 const bookingsRouter = require('./src/routes/bookings');
 const equipmentRouter = require('./src/routes/equipment');
+const adminAuthRouter = require('./src/routes/admin-auth');
 
 const app = express();
 app.use(helmet());
@@ -24,6 +25,7 @@ app.get('/', (req, res) => {
 
 app.use('/users', usersRouter);
 app.use('/auth', authRouter);
+app.use('/admin-auth', adminAuthRouter);
 app.use('/add-ons', addOnsRouter);
 app.use('/services', servicesRouter);
 app.use('/labs', labsRouter);
