@@ -41,4 +41,51 @@ function verifyToken(req, res, next) {
   }
 }
 
-module.exports = { verifyToken };
+
+// Admin JWT Middleware to protect lab-admin-only endpoints
+
+function verifyAdmin(req, res, next) {
+
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader) {
+        return res.status(401).json({
+            error: 'Token required'
+        });
+    }
+
+    const token = authHeader.split(' ')[1];
+
+    try {
+
+        const decoded = jwt.verify(
+            token,
+            process.env.JWT_SECRET,
+            {
+                issuer: 'mi-health-api',
+                audience: 'mi-health-admin'
+            }
+        );
+
+        if (decoded.role !== 'LabAdmin') {
+            return res.status(403).json({
+                error: 'Admin access required'
+            });
+        }
+
+        req.admin = decoded;
+
+        next();
+
+    } catch {
+        return res.status(401).json({
+            error: 'Invalid token'
+        });
+    }
+}
+
+
+module.exports = { 
+  verifyToken, 
+  verifyAdmin 
+};
