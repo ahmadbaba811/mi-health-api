@@ -1,16 +1,39 @@
 const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../db');
+const { formatTime, formatDate } = require('../middleware/helpers');
+
+
+router.post('/lab-dates', async (req, res) => {
+  let labIds = req.body.join(',')
+
+  try {
+    const request = pool.request();
+    request.input('labIds', sql.VarChar(50), labIds);
+
+    const result = await request.query(`SELECT id, labId, slotDate, timeSlot, isAvailable, capacity FROM time_slot_availability WHERE labId in (${labIds}) AND slotDate >= CAST(GETDATE() AS DATE)`);
+    const dates = result.recordset
+    res.json(dates.map(row => ({
+      ...row,
+      slotDate: formatDate(row.slotDate),
+      timeSlot: formatTime(row.timeSlot)
+    })));
+  } catch (err) {
+    console.error('Error fetching time slots:', err);
+    res.status(500).json({ error: 'Failed to fetch time slots' });
+  }
+});
+
 
 // GET all available time slots
 router.get('/', async (req, res) => {
   try {
     // Return predefined time slots
     const timeSlots = [
-      "07:30","08:00","08:30","09:00","09:30","10:00",
-      "10:30","11:00","11:30","12:00","13:00","13:30",
-      "14:00","14:30","15:00","15:30","16:00","16:30",
-      "17:00","17:30","18:00",
+      "07:30", "08:00", "08:30", "09:00", "09:30", "10:00",
+      "10:30", "11:00", "11:30", "12:00", "13:00", "13:30",
+      "14:00", "14:30", "15:00", "15:30", "16:00", "16:30",
+      "17:00", "17:30", "18:00",
     ];
 
     res.json(timeSlots);
@@ -45,10 +68,10 @@ router.get('/lab/:labId/date/:date', async (req, res) => {
 // Helper function to get default time slots
 function getAllDefaultSlots() {
   return [
-    "07:30","08:00","08:30","09:00","09:30","10:00",
-    "10:30","11:00","11:30","12:00","13:00","13:30",
-    "14:00","14:30","15:00","15:30","16:00","16:30",
-    "17:00","17:30","18:00",
+    "07:30", "08:00", "08:30", "09:00", "09:30", "10:00",
+    "10:30", "11:00", "11:30", "12:00", "13:00", "13:30",
+    "14:00", "14:30", "15:00", "15:30", "16:00", "16:30",
+    "17:00", "17:30", "18:00",
   ];
 }
 

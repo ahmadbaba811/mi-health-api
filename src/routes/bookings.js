@@ -11,23 +11,8 @@ async function getFullBooking({ bookingId, userId }) {
     bookingRequest.input('userId', sql.Int, userId || null);
 
     const bookingResult = await bookingRequest.query(`
-        SELECT
-            a.id,
-            a.ref,
-            b.labId,
-            b.bookingId,
-            b.date,
-            b.time,
-            b.status,
-            b.total,
-            b.isWalkIn,
-            b.homeAddress,
-            b.addOns,
-            b.createdAt
-        FROM bookings a
-        INNER JOIN booking_services b
-            ON a.ref = b.ref
-        WHERE ${bookingId ? 'a.id = @id' : 'a.userId = @userId'}
+       SELECT id, id as bookingId, userId, ref, labId, totalPrice as total, status, isWalkIn, date, time, homeAddress, postCode, addOns, createdAt from bookings
+       WHERE ${bookingId ? 'id = @id' : 'userId = @userId'}
     `);
 
     if (bookingResult.recordset.length === 0) {
@@ -52,32 +37,14 @@ async function getFullBooking({ bookingId, userId }) {
         labRequest.input('labId', sql.Int, booking.labId);
 
         const labResult = await labRequest.query(`
-            SELECT
-                id,
-                name,
-                area,
-                address,
-                distance,
-                rating,
-                reviewCount,
-                openTime,
-                closeTime,
-                isOpen,
-                certifications,
-                phone,
-                image
-            FROM Labs
-            WHERE id = @labId
+            SELECT id, name, area, address, distance, rating, reviewCount, openTime, closeTime, isOpen, certifications, phone, image FROM Labs WHERE id = @labId
         `);
 
         if (labResult.recordset.length > 0) {
-
             const lab = labResult.recordset[0];
-
             lab.certifications = lab.certifications
                 ? lab.certifications.split(',').map(x => x.trim())
                 : [];
-
             // ==========================
             // Fetch Lab Services
             // ==========================
@@ -86,17 +53,9 @@ async function getFullBooking({ bookingId, userId }) {
             labServicesRequest.input('labId', sql.Int, booking.labId);
 
             const labServicesResult = await labServicesRequest.query(`
-                SELECT
-                    s.id,
-                    s.name,
-                    ls.price,
-                    ls.duration,
-                    s.category,
-                    s.description,
-                    ls.preparation
-                FROM lk_services s
-                INNER JOIN lab_services ls
-                    ON s.id = ls.serviceId
+                SELECT s.id, s.name, ls.price, ls.duration, s.category,
+                s.description, ls.preparation FROM lk_services s
+                INNER JOIN lab_services ls ON s.id = ls.serviceId
                 WHERE ls.labId = @labId
                 ORDER BY s.name ASC
             `);
@@ -114,26 +73,10 @@ async function getFullBooking({ bookingId, userId }) {
         servicesRequest.input('bookingId', sql.Int, booking.bookingId);
 
         const servicesResult = await servicesRequest.query(`
-            SELECT
-                s.id,
-                ls.labId,
-                ls.id AS labServiceId,
-                bs.bookingId,
-                b.userId,
-                s.name,
-                ls.price,
-                ls.duration,
-                s.category,
-                s.description,
-                ls.preparation
-            FROM lk_services s
-            INNER JOIN lab_services ls
-                ON s.id = ls.serviceId
-            INNER JOIN booking_services bs
-                ON ls.serviceId = bs.serviceId
-            INNER JOIN bookings b
-                ON b.id = bs.bookingId
-            WHERE bs.bookingId = @bookingId
+            SELECT b.id, ls.labId, b.labServiceId, s.name, b.price, ls.duration, s.category, s.description, ls.preparation FROM lk_services s 
+            INNER JOIN lab_services ls on s.id = ls.serviceId 
+            INNER JOIN booking_services b on b.labserviceId  = ls.id
+            WHERE b.bookingId = @bookingId
         `);
 
         booking.services = servicesResult.recordset;

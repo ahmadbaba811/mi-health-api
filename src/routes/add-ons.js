@@ -8,7 +8,7 @@ router.get('/', async (req, res) => {
     const request = pool.request();
     const result = await request.query(`
       SELECT CAST(id AS VARCHAR(20)) AS id, name, price, requiresScheduling, description 
-      FROM lk_add_ons 
+      FROM lk_add_ons WHERE isActive = 1
       ORDER BY price ASC
     `);
 
