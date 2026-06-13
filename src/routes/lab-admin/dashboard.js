@@ -19,38 +19,37 @@ router.get('/stats', verifyAdmin, async (req, res) => {
             .query(`
                 SELECT
 
-                    -- Upcoming Bookings
+                    -- Upcoming (Pending + Upcoming)
                     SUM(
-                        CASE
-                            WHEN LOWER(LTRIM(RTRIM(status))) IN ('pending', 'upcoming', 'confirmed')
-                            THEN 1
-                            ELSE 0
+                        CASE 
+                            WHEN b.currentStatusId IN (1, 2)
+                            THEN 1 ELSE 0
                         END
                     ) AS totalUpcomingBookings,
 
-                    -- Completed Bookings
+                    -- Completed
                     SUM(
-                        CASE
-                            WHEN LOWER(LTRIM(RTRIM(status))) = 'completed'
-                            THEN 1
-                            ELSE 0
+                        CASE 
+                            WHEN b.currentStatusId = 3
+                            THEN 1 ELSE 0
                         END
                     ) AS totalCompletedBookings,
 
-                    -- Total Revenue
+                    -- Revenue (only completed bookings)
                     ISNULL(
                         SUM(
-                            CASE
-                                WHEN LOWER(LTRIM(RTRIM(status))) = 'completed'
-                                THEN total
+                            CASE 
+                                WHEN b.currentStatusId = 3
+                                THEN bs.total
                                 ELSE 0
                             END
-                        ),
-                        0
+                        ), 0
                     ) AS totalRevenue
 
-                FROM booking_services
-                WHERE labId = @labId
+                FROM booking_services bs
+                INNER JOIN bookings b
+                    ON bs.bookingId = b.id
+                WHERE bs.labId = @labId
             `);
 
         const stats = result.recordset[0];
@@ -58,14 +57,9 @@ router.get('/stats', verifyAdmin, async (req, res) => {
         return res.status(200).json({
             success: true,
             data: {
-                totalUpcomingBookings:
-                    stats.totalUpcomingBookings || 0,
-
-                totalCompletedBookings:
-                    stats.totalCompletedBookings || 0,
-
-                totalRevenue:
-                    Number(stats.totalRevenue || 0)
+                totalUpcomingBookings: stats.totalUpcomingBookings || 0,
+                totalCompletedBookings: stats.totalCompletedBookings || 0,
+                totalRevenue: Number(stats.totalRevenue || 0)
             }
         });
 
@@ -168,7 +162,6 @@ router.post('/', verifyAdmin, async (req, res) => {
 
 
 // // GET bookings Returns only bookings belonging to the admin's lab
-
 router.get('/bookings', verifyAdmin, async (req, res) => {
 
     const labId = req.admin.labId;
@@ -186,9 +179,9 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
                     bs.labId,
 
                     b.userId,
+                    b.totalPrice,
 
                     bs.total,
-                    bs.status,
                     bs.serviceType,
                     bs.isWalkIn,
                     bs.date,
@@ -196,7 +189,8 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
                     bs.homeAddress,
                     bs.addOns,
 
-                   /* l.name AS labName, */
+                    b.currentStatusId,
+                    s.name AS statusName,
 
                     bs.createdAt,
                     bs.updatedAt
@@ -206,8 +200,8 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
                 INNER JOIN bookings b
                     ON bs.bookingId = b.id
 
-               /* INNER JOIN labs l
-                    ON bs.labId = l.id */
+                LEFT JOIN booking_statuses s
+                    ON b.currentStatusId = s.id
 
                 WHERE bs.labId = @labId
 
@@ -230,130 +224,6 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
     }
 });
 
-router.post('/', verifyAdmin, async (req, res) => {
 
-    const labId = req.admin.labId;
-    const adminId = req.admin.adminId;
-
-    const {
-        equipmentName,
-        model,
-        serialNumber,
-        lastCalibrated,
-        nextServiceDue,
-        category,
-        status,
-        notes
-    } = req.body;
-
-    if (!equipmentName) {
-        return res.status(400).json({
-            error: 'equipmentName is required'
-        });
-    }
-
-    if (!category) {
-        return res.status(400).json({
-            error: 'category is required'
-        });
-    }
-
-    try {
-
-        const transaction = new sql.Transaction(pool);
-
-        await transaction.begin();
-
-        const equipmentRequest = new sql.Request(transaction);
-
-        const equipmentResult = await equipmentRequest
-            .input('labId', sql.Int, labId)
-            .input('equipmentName', sql.NVarChar(255), equipmentName)
-            .input('model', sql.NVarChar(255), model || null)
-            .input('equipmentType', sql.NVarChar(255), category)
-            .input('serialNumber', sql.NVarChar(255), serialNumber || null)
-            .input('lastCalibrated', sql.Date, lastCalibrated || null)
-            .input('nextServiceDue', sql.Date, nextServiceDue || null)
-            .input('status', sql.NVarChar(100), status || 'Operational')
-            .input('notes', sql.NVarChar(sql.MAX), notes || null)
-            .query(`
-                INSERT INTO equipment
-                (
-                    labId,
-                    equipmentName,
-                    model,
-                    equipmentType,
-                    serialNumber,
-                    lastCalibrated,
-                    nextServiceDue,
-                    currentStatus,
-                    notes,
-                    isActive,
-                    isArchived,
-                    createdAt
-                )
-                OUTPUT INSERTED.*
-                VALUES
-                (
-                    @labId,
-                    @equipmentName,
-                    @model,
-                    @equipmentType,
-                    @serialNumber,
-                    @lastCalibrated,
-                    @nextServiceDue,
-                    @status,
-                    @notes,
-                    1,
-                    0,
-                    SYSUTCDATETIME()
-                )
-            `);
-
-        const equipment = equipmentResult.recordset[0];
-
-        await new sql.Request(transaction)
-            .input('equipmentId', sql.Int, equipment.id)
-            .input('newStatusId', sql.NVarChar(100), status || 'Operational')
-            .input('reason', sql.NVarChar(500), 'Equipment created')
-            .input('changedBy', sql.Int, adminId)
-            .query(`
-                INSERT INTO equipment_status_log
-                (
-                    equipmentId,
-                    previousStatusId,
-                    newStatusId,
-                    reason,
-                    changed_by,
-                    changed_at
-                )
-                VALUES
-                (
-                    @equipmentId,
-                    NULL,
-                    @newStatusId,
-                    @reason,
-                    @changedBy,
-                    SYSUTCDATETIME()
-                )
-            `);
-
-        await transaction.commit();
-
-        return res.status(201).json({
-            success: true,
-            message: 'Equipment created successfully',
-            data: equipment
-        });
-
-    } catch (err) {
-
-        console.error('Equipment creation error:', err);
-
-        return res.status(500).json({
-            error: 'Failed to create equipment'
-        });
-    }
-});
 
 module.exports = router;
