@@ -22,7 +22,7 @@ router.get('/stats', verifyAdmin, async (req, res) => {
                     -- Upcoming Bookings
                     SUM(
                         CASE
-                            WHEN status IN ('Pending', 'Confirmed')
+                            WHEN LOWER(LTRIM(RTRIM(status))) IN ('pending', 'upcoming', 'confirmed')
                             THEN 1
                             ELSE 0
                         END
@@ -31,7 +31,7 @@ router.get('/stats', verifyAdmin, async (req, res) => {
                     -- Completed Bookings
                     SUM(
                         CASE
-                            WHEN status = 'Completed'
+                            WHEN LOWER(LTRIM(RTRIM(status))) = 'completed'
                             THEN 1
                             ELSE 0
                         END
@@ -41,7 +41,7 @@ router.get('/stats', verifyAdmin, async (req, res) => {
                     ISNULL(
                         SUM(
                             CASE
-                                WHEN status = 'Completed'
+                                WHEN LOWER(LTRIM(RTRIM(status))) = 'completed'
                                 THEN total
                                 ELSE 0
                             END
@@ -226,6 +226,132 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
 
         return res.status(500).json({
             error: 'Failed to fetch bookings'
+        });
+    }
+});
+
+router.post('/', verifyAdmin, async (req, res) => {
+
+    const labId = req.admin.labId;
+    const adminId = req.admin.adminId;
+
+    const {
+        equipmentName,
+        model,
+        serialNumber,
+        lastCalibrated,
+        nextServiceDue,
+        category,
+        status,
+        notes
+    } = req.body;
+
+    if (!equipmentName) {
+        return res.status(400).json({
+            error: 'equipmentName is required'
+        });
+    }
+
+    if (!category) {
+        return res.status(400).json({
+            error: 'category is required'
+        });
+    }
+
+    try {
+
+        const transaction = new sql.Transaction(pool);
+
+        await transaction.begin();
+
+        const equipmentRequest = new sql.Request(transaction);
+
+        const equipmentResult = await equipmentRequest
+            .input('labId', sql.Int, labId)
+            .input('equipmentName', sql.NVarChar(255), equipmentName)
+            .input('model', sql.NVarChar(255), model || null)
+            .input('equipmentType', sql.NVarChar(255), category)
+            .input('serialNumber', sql.NVarChar(255), serialNumber || null)
+            .input('lastCalibrated', sql.Date, lastCalibrated || null)
+            .input('nextServiceDue', sql.Date, nextServiceDue || null)
+            .input('status', sql.NVarChar(100), status || 'Operational')
+            .input('notes', sql.NVarChar(sql.MAX), notes || null)
+            .query(`
+                INSERT INTO equipment
+                (
+                    labId,
+                    equipmentName,
+                    model,
+                    equipmentType,
+                    serialNumber,
+                    lastCalibrated,
+                    nextServiceDue,
+                    currentStatus,
+                    notes,
+                    isActive,
+                    isArchived,
+                    createdAt
+                )
+                OUTPUT INSERTED.*
+                VALUES
+                (
+                    @labId,
+                    @equipmentName,
+                    @model,
+                    @equipmentType,
+                    @serialNumber,
+                    @lastCalibrated,
+                    @nextServiceDue,
+                    @status,
+                    @notes,
+                    1,
+                    0,
+                    SYSUTCDATETIME()
+                )
+            `);
+
+        const equipment = equipmentResult.recordset[0];
+
+        await new sql.Request(transaction)
+            .input('equipmentId', sql.Int, equipment.id)
+            .input('newStatusId', sql.NVarChar(100), status || 'Operational')
+            .input('reason', sql.NVarChar(500), 'Equipment created')
+            .input('changedBy', sql.Int, adminId)
+            .query(`
+                INSERT INTO equipment_status_log
+                (
+                    equipmentId,
+                    previousStatusId,
+                    newStatusId,
+                    reason,
+                    changed_by,
+                    changed_at
+                )
+                VALUES
+                (
+                    @equipmentId,
+                    NULL,
+                    @newStatusId,
+                    @reason,
+                    @changedBy,
+                    SYSUTCDATETIME()
+                )
+            `);
+
+        await transaction.commit();
+
+        return res.status(201).json({
+            success: true,
+            message: 'Equipment created successfully',
+            data: equipment
+        });
+
+    } catch (err) {
+
+        console.error('Equipment creation error:', err);
+
+        return res.status(500).json({
+            error: 'Failed to create equipment'
         });
     }
 });
