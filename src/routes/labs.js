@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../db');
-const { formatTime } = require('../middleware/helpers');
+const { formatTime, findClosestSearch } = require('../middleware/helpers');
+const { Int } = require('mssql');
 
 // GET all labs
 router.post('/', async (req, res) => {
@@ -51,6 +52,156 @@ router.post('/', async (req, res) => {
         );
 
         res.json(labsWithServices);
+    } catch (err) {
+        console.error('Error fetching labs:', err);
+        res.status(500).json({ error: 'Failed to fetch labs' });
+    }
+});
+
+
+router.get('/count', async (req, res) => {
+    try {
+        const request = pool.request();
+        let select = `SELECT COUNT(distinct a.id) FROM Labs a INNER JOIN lab_services b ON a.id = b.LabId INNER JOIN lk_services c ON  c.id = b.serviceId WHERE 1=1 `
+        let result = await request.query(select);
+        const totalRecords = result.recordset.length
+        return res.json({ totalRecords })
+    } catch (error) {
+        console.error('Failed to get lab count', error)
+        return res.status(500).json({ error: 'Unable to fetch lab count' })
+    }
+})
+
+router.post('/search', async (req, res) => {
+    const { searchString, userLocation, useLocation, userDistance, page, recordSize, countRecords } = req.body;
+    const request = pool.request();
+
+    let whereClauses = [];
+    let select = `SELECT distinct a.id, a.name, area, state, lga, address, rating, reviewCount, openTime, closeTime, isOpen, certifications, phone, image `
+    let where = `(
+        state LIKE '%' + @searchString + '%'
+        OR lga LIKE '%' + @searchString + '%'
+        OR c.name LIKE '%' + @searchString + '%'
+        OR a.name LIKE '%' + @searchString + '%'
+      )`
+
+    // Search text condition
+    if (searchString !== "") {
+        request.input("searchString", searchString);
+
+        whereClauses.push(where);
+    }
+
+    // Location condition
+    if (useLocation === true) {
+
+        request.input("lat", userLocation.lat);
+        request.input("lng", userLocation.lng);
+        select = select + ` ,ROUND(a.Location.STDistance(geography::Point(@lat, @lng, 4326) )/1000, 1) AS distance`
+        whereClauses.push(` a.Location.STDistance(geography::Point(@lat, @lng, 4326) ) <= ${parseInt(userDistance) <= 0 ? 20000 : parseInt(userDistance)} `);
+    }
+
+    let query = `${select} 
+    FROM Labs a 
+    INNER JOIN lab_services b ON a.id = b.LabId 
+    INNER JOIN lk_services c ON  c.id = b.serviceId WHERE 1=1 `
+
+    if (whereClauses.length) {
+        query += ` AND ${whereClauses.join(" AND ")}`;
+    }
+
+    //count records before limiting the search
+    let total_count = 0;
+
+    const _tot = await request.query(query)
+    total_count = _tot.recordset.length;
+
+    request.input('page', page);
+    request.input('recordSize', recordSize);
+    query += ` ORDER BY rating DESC OFFSET (@page - 1) * @recordSize ROWS FETCH NEXT @recordSize ROWS ONLY`
+
+    try {
+        let result = await request.query(query);
+
+        let searchUsed = searchString;
+        let didYouMean = null;
+        let isFuzzyMatch = false;
+
+        if (searchString?.trim() !== "" && result.recordset.length === 0) {
+            const closestMatch = await findClosestSearch(searchString);
+
+            if (closestMatch) {
+                didYouMean = closestMatch?.item;
+                searchUsed = closestMatch?.item;
+                isFuzzyMatch = true;
+
+                const fuzzyRequest = pool.request();
+
+                if (useLocation) {
+                    fuzzyRequest.input("lat", userLocation.lat);
+                    fuzzyRequest.input("lng", userLocation.lng);
+                }
+
+                fuzzyRequest.input("searchString", didYouMean);
+
+                const fuzzyWhereClauses = [];
+
+                fuzzyWhereClauses.push(where);
+
+                if (useLocation === true) {
+                    fuzzyWhereClauses.push(`a.Location.STDistance(geography::Point(@lat,@lng,4326)) <= ${parseInt(userDistance) <= 0 ? 20000 : parseInt(userDistance)}`);
+                }
+
+                let fuzzyQuery = `${select}
+                    FROM Labs a
+                    INNER JOIN lab_services b ON a.id = b.LabId 
+                    INNER JOIN lk_services c ON  c.id = b.serviceId
+                    WHERE 
+                    ${fuzzyWhereClauses.length > 0 && ` ${fuzzyWhereClauses.join(" AND ")} `} 
+                    `;
+
+                // _count.input("searchString", searchString);
+                const _tot2 = await fuzzyRequest.query(fuzzyQuery)
+                total_count = _tot2.recordset.length;
+
+                fuzzyRequest.input('page', page);
+                fuzzyRequest.input('recordSize', recordSize);
+                fuzzyQuery += ` ORDER BY rating DESC OFFSET (@page - 1) * @recordSize ROWS FETCH NEXT @recordSize ROWS ONLY`
+                result = await fuzzyRequest.query(fuzzyQuery);
+
+            }
+        }
+
+        const labs = result.recordset.map(lab => ({
+            ...lab,
+            openTime: formatTime(lab.openTime),
+            closeTime: formatTime(lab.closeTime),
+            id: lab.id.toString(),
+            certifications: lab.certifications ? [result.recordset[0].certifications.split(", ").join(" ")] : []
+        }));
+
+
+        // For each lab, fetch associated services
+        const labsWithServices = await Promise.all(labs.map(async (lab) => {
+            const servicesRequest = pool.request();
+            servicesRequest.input('labId', sql.VarChar(50), lab.id.toString());
+
+            const servicesResult = await servicesRequest.query(`
+                        SELECT s.id, s.name, ls.price, ls.duration, s.category, s.description, ls.preparation
+                        FROM lk_Services s
+                        INNER JOIN lab_services ls ON s.id = ls.serviceId
+                        WHERE ls.labId = @labId
+                        ORDER BY s.name ASC
+                        `);
+
+            return {
+                ...lab,
+                services: servicesResult.recordset
+            };
+        })
+        );
+
+        res.json({ labs: labsWithServices, didYouMean: didYouMean, isFuzzyMatch, isFuzzyMatch, total_count: total_count });
     } catch (err) {
         console.error('Error fetching labs:', err);
         res.status(500).json({ error: 'Failed to fetch labs' });
