@@ -91,7 +91,7 @@ router.get('/stats', verifyAdmin, async (req, res) => {
 
 
 // Add a new service, only admin can create a new service belonging to their lab 
-router.post('/', verifyAdmin, async (req, res) => {
+router.post('/services', verifyAdmin, async (req, res) => {
 
     const labId = req.admin.labId;
     const adminId = req.admin.adminId;
