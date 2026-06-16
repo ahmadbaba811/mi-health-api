@@ -1,187 +1,406 @@
 const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../db');
+const { verifyAdmin  } = require('../middleware/auth');
 
-// GET all equipment
-router.get('/', async (req, res) => {
-  try {
-    const request = pool.request();
-    const result = await request.query(`
-      SELECT id, labId, name, category, model, serialNo, status, lastCalibrated, nextService, notes 
-      FROM Equipment 
-      ORDER BY labId ASC, category ASC
-    `);
 
-    res.json(result.recordset);
-  } catch (err) {
-    console.error('Error fetching equipment:', err);
-    res.status(500).json({ error: 'Failed to fetch equipment' });
-  }
+// get equipment
+router.get('/', verifyAdmin, async (req, res) => {
+    const labId = req.admin.labId;
+
+    try {
+        const result = await pool.request()
+            .input('labId', sql.Int, labId)
+            .query(`
+                SELECT 
+                    e.id,
+                    e.equipmentName AS equipment,
+                    e.equipmentType AS category,
+                    e.model,
+                    e.serialNumber,
+                    e.lastCalibrated,
+                    e.nextServiceDue,
+                    e.notes,
+                    e.currentStatusId
+                FROM equipment e
+                WHERE e.labId = @labId
+                  AND e.isArchived = 0
+                ORDER BY e.createdAt DESC
+            `);
+
+        const mapped = result.recordset.map(e => ({
+            id: e.id,
+            equipment: e.equipment,
+            category: e.category,
+            modelSerial: `${e.model || ''} / ${e.serialNumber || ''}`,
+            calibrated: e.lastCalibrated,
+            nextService: e.nextServiceDue,
+            notes: e.notes,
+            statusId: e.currentStatusId
+        }));
+
+        return res.status(200).json({
+            success: true,
+            data: mapped
+        });
+
+    } catch (err) {
+        console.error('Equipment fetch error:', err);
+        return res.status(500).json({
+            error: 'Failed to fetch equipment'
+        });
+    }
 });
 
-// GET single equipment by ID
-router.get('/:id', async (req, res) => {
-  try {
-    const request = pool.request();
-    request.input('id', sql.VarChar(50), req.params.id);
+// Add a new equipment, only a verified lab admin can add equipment 
+router.post('/add-equipment', verifyAdmin, async (req, res) => {
 
-    const result = await request.query(`
-      SELECT id, labId, name, category, model, serialNo, status, lastCalibrated, nextService, notes 
-      FROM Equipment 
-      WHERE id = @id
-    `);
+    const labId = req.admin.labId;
+    const adminId = req.admin.adminId;
 
-    if (result.recordset.length === 0) {
-      return res.status(404).json({ error: 'Equipment not found' });
+    const {
+        equipmentName,
+        model,
+        serialNumber,
+        lastCalibrated,
+        nextServiceDue,
+        category,
+        statusId,
+        notes
+    } = req.body;
+
+    if (!equipmentName) {
+        return res.status(400).json({
+            error: 'equipmentName is required'
+        });
     }
 
-    res.json(result.recordset[0]);
-  } catch (err) {
-    console.error('Error fetching equipment:', err);
-    res.status(500).json({ error: 'Failed to fetch equipment' });
-  }
+    if (!category) {
+        return res.status(400).json({
+            error: 'category is required'
+        });
+    }
+
+    try {
+
+        const transaction = new sql.Transaction(pool);
+
+        await transaction.begin();
+
+        // Validate status exists
+        const statusCheck = await new sql.Request(transaction)
+            .input('statusId', sql.TinyInt, statusId || 1)
+            .query(`
+                SELECT id
+                FROM equipment_statuses
+                WHERE id = @statusId
+            `);
+
+        if (statusCheck.recordset.length === 0) {
+            await transaction.rollback();
+
+            return res.status(400).json({
+                error: 'Invalid statusId'
+            });
+        }
+
+        // Create equipment
+        const equipmentResult = await new sql.Request(transaction)
+            .input('labId', sql.Int, labId)
+            .input('equipmentName', sql.NVarChar(255), equipmentName)
+            .input('model', sql.NVarChar(255), model || null)
+            .input('equipmentType', sql.NVarChar(255), category)
+            .input('serialNumber', sql.NVarChar(255), serialNumber || null)
+            .input('lastCalibrated', sql.Date, lastCalibrated || null)
+            .input('nextServiceDue', sql.Date, nextServiceDue || null)
+            .input('currentStatusId', sql.TinyInt, statusId || 1)
+            .input('notes', sql.NVarChar(sql.MAX), notes || null)
+            .query(`
+                INSERT INTO equipment
+                (
+                    labId,
+                    equipmentName,
+                    model,
+                    equipmentType,
+                    serialNumber,
+                    lastCalibrated,
+                    nextServiceDue,
+                    currentStatusId,
+                    notes,
+                    isActive,
+                    isArchived,
+                    createdAt
+                )
+                OUTPUT INSERTED.*
+                VALUES
+                (
+                    @labId,
+                    @equipmentName,
+                    @model,
+                    @equipmentType,
+                    @serialNumber,
+                    @lastCalibrated,
+                    @nextServiceDue,
+                    @currentStatusId,
+                    @notes,
+                    1,
+                    0,
+                    SYSUTCDATETIME()
+                )
+            `);
+
+        const equipment = equipmentResult.recordset[0];
+
+        // Create status history record
+        await new sql.Request(transaction)
+            .input('equipmentId', sql.Int, equipment.id)
+            .input('newStatusId', sql.TinyInt, statusId || 1)
+            .input('reason', sql.NVarChar(500), 'Equipment created')
+            .input('changedBy', sql.Int, adminId)
+            .query(`
+                INSERT INTO equipment_status_log
+                (
+                    equipmentId,
+                    previousStatusId,
+                    newStatusId,
+                    reason,
+                    changed_by,
+                    changed_at
+                )
+                VALUES
+                (
+                    @equipmentId,
+                    NULL,
+                    @newStatusId,
+                    @reason,
+                    @changedBy,
+                    SYSUTCDATETIME()
+                )
+            `);
+
+        await transaction.commit();
+
+        return res.status(201).json({
+            success: true,
+            message: 'Equipment created successfully',
+            data: equipment
+        });
+
+    } catch (err) {
+
+        console.error('Equipment creation error:', err);
+
+        return res.status(500).json({
+            error: 'Failed to create equipment'
+        });
+    }
 });
 
-// GET equipment by lab ID
-router.get('/lab/:labId', async (req, res) => {
-  try {
-    const request = pool.request();
-    request.input('labId', sql.VarChar(50), req.params.labId);
 
-    const result = await request.query(`
-      SELECT id, labId, name, category, model, serialNo, status, lastCalibrated, nextService, notes 
-      FROM Equipment 
-      WHERE labId = @labId
-      ORDER BY category ASC
-    `);
+// PUT update an equipment equipment
+router.put('/:id', verifyAdmin, async (req, res) => {
 
-    res.json(result.recordset);
-  } catch (err) {
-    console.error('Error fetching equipment by lab:', err);
-    res.status(500).json({ error: 'Failed to fetch equipment' });
-  }
+    const equipmentId = parseInt(req.params.id);
+
+    const labId = req.admin.labId;
+    const adminId = req.admin.adminId;
+
+    const {
+        equipmentName,
+        model,
+        serialNumber,
+        lastCalibrated,
+        nextServiceDue,
+        category,
+        statusId,
+        notes,
+        isActive,
+        isArchived
+    } = req.body;
+
+    if (!equipmentId) {
+        return res.status(400).json({
+            error: 'Invalid equipment id'
+        });
+    }
+
+    const transaction = new sql.Transaction(pool);
+
+    try {
+
+        await transaction.begin();
+
+        // Verify ownership
+        const equipmentResult = await new sql.Request(transaction)
+            .input('equipmentId', sql.Int, equipmentId)
+            .input('labId', sql.Int, labId)
+            .query(`
+                SELECT *
+                FROM equipment
+                WHERE id = @equipmentId
+                AND labId = @labId
+            `);
+
+        if (equipmentResult.recordset.length === 0) {
+
+            await transaction.rollback();
+
+            return res.status(404).json({
+                error: 'Equipment not found'
+            });
+        }
+
+        const existingEquipment = equipmentResult.recordset[0];
+
+        // Validate status exists
+        if (statusId) {
+
+            const statusCheck = await new sql.Request(transaction)
+                .input('statusId', sql.TinyInt, statusId)
+                .query(`
+                    SELECT id
+                    FROM equipment_statuses
+                    WHERE id = @statusId
+                `);
+
+            if (statusCheck.recordset.length === 0) {
+
+                await transaction.rollback();
+
+                return res.status(400).json({
+                    error: 'Invalid statusId'
+                });
+            }
+        }
+
+        // Update equipment
+        const updateResult = await new sql.Request(transaction)
+            .input('equipmentId', sql.Int, equipmentId)
+            .input('equipmentName', sql.NVarChar(255), equipmentName)
+            .input('model', sql.NVarChar(255), model)
+            .input('serialNumber', sql.NVarChar(255), serialNumber)
+            .input('lastCalibrated', sql.Date, lastCalibrated || null)
+            .input('nextServiceDue', sql.Date, nextServiceDue || null)
+            .input('equipmentType', sql.NVarChar(255), category)
+            .input('currentStatusId', sql.TinyInt, statusId)
+            .input('notes', sql.NVarChar(sql.MAX), notes)
+            .input('isActive', sql.Bit, isActive)
+            .input('isArchived', sql.Bit, isArchived)
+            .query(`
+                UPDATE equipment
+                SET
+                    equipmentName = @equipmentName,
+                    model = @model,
+                    serialNumber = @serialNumber,
+                    lastCalibrated = @lastCalibrated,
+                    nextServiceDue = @nextServiceDue,
+                    equipmentType = @equipmentType,
+                    currentStatusId = @currentStatusId,
+                    notes = @notes,
+                    isActive = @isActive,
+                    isArchived = @isArchived
+                OUTPUT INSERTED.*
+                WHERE id = @equipmentId
+            `);
+
+        const updatedEquipment = updateResult.recordset[0];
+
+        // Log status change only if status changed
+        if (
+            statusId &&
+            existingEquipment.currentStatusId !== statusId
+        ) {
+
+            await new sql.Request(transaction)
+                .input('equipmentId', sql.Int, equipmentId)
+                .input('previousStatusId', sql.TinyInt, existingEquipment.currentStatusId)
+                .input('newStatusId', sql.TinyInt, statusId)
+                .input('reason', sql.NVarChar(500), 'Status updated')
+                .input('changedBy', sql.Int, adminId)
+                .query(`
+                    INSERT INTO equipment_status_log
+                    (
+                        equipmentId,
+                        previousStatusId,
+                        newStatusId,
+                        reason,
+                        changed_by,
+                        changed_at
+                    )
+                    VALUES
+                    (
+                        @equipmentId,
+                        @previousStatusId,
+                        @newStatusId,
+                        @reason,
+                        @changedBy,
+                        SYSUTCDATETIME()
+                    )
+                `);
+        }
+
+        await transaction.commit();
+
+        return res.status(200).json({
+            success: true,
+            message: 'Equipment updated successfully',
+            data: updatedEquipment
+        });
+
+    } catch (err) {
+
+        await transaction.rollback();
+
+        console.error('Equipment update error:', err);
+
+        return res.status(500).json({
+            error: 'Failed to update equipment'
+        });
+    }
 });
 
-// GET equipment by status
-router.get('/status/:status', async (req, res) => {
-  try {
-    const request = pool.request();
-    request.input('status', sql.VarChar(50), req.params.status);
+router.delete('/:id', verifyAdmin, async (req, res) => {
+    const labId = req.admin.labId;
+    const equipmentId = req.params.id;
 
-    const result = await request.query(`
-      SELECT id, labId, name, category, model, serialNo, status, lastCalibrated, nextService, notes 
-      FROM Equipment 
-      WHERE status = @status
-      ORDER BY labId ASC
-    `);
+    try {
+        // 1. Verify ownership
+        const check = await pool.request()
+            .input('id', sql.Int, equipmentId)
+            .input('labId', sql.Int, labId)
+            .query(`
+                SELECT id 
+                FROM equipment 
+                WHERE id = @id AND labId = @labId
+            `);
 
-    res.json(result.recordset);
-  } catch (err) {
-    console.error('Error fetching equipment by status:', err);
-    res.status(500).json({ error: 'Failed to fetch equipment' });
-  }
+        if (check.recordset.length === 0) {
+            return res.status(404).json({
+                error: 'Equipment not found or access denied'
+            });
+        }
+
+        // 2. Soft delete (archive instead of deleting)
+        await pool.request()
+            .input('id', sql.Int, equipmentId)
+            .query(`
+                UPDATE equipment
+                SET isArchived = 1
+                WHERE id = @id
+            `);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Equipment deleted successfully'
+        });
+
+    } catch (err) {
+        console.error('Equipment delete error:', err);
+        return res.status(500).json({
+            error: 'Failed to delete equipment'
+        });
+    }
 });
 
-// GET equipment requiring maintenance
-router.get('/maintenance/pending', async (req, res) => {
-  try {
-    const request = pool.request();
-    const result = await request.query(`
-      SELECT id, labId, name, category, model, serialNo, status, lastCalibrated, nextService, notes 
-      FROM Equipment 
-      WHERE status IN ('maintenance', 'offline')
-      ORDER BY nextService ASC
-    `);
-
-    res.json(result.recordset);
-  } catch (err) {
-    console.error('Error fetching pending maintenance:', err);
-    res.status(500).json({ error: 'Failed to fetch equipment' });
-  }
-});
-
-// POST create new equipment
-router.post('/', async (req, res) => {
-  const { id, labId, name, category, model, serialNo, status, lastCalibrated, nextService, notes } = req.body;
-
-  if (!id || !labId || !name || !category || !model) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-
-  try {
-    const request = pool.request();
-    request.input('id', sql.VarChar(50), id);
-    request.input('labId', sql.VarChar(50), labId);
-    request.input('name', sql.VarChar(255), name);
-    request.input('category', sql.VarChar(100), category);
-    request.input('model', sql.VarChar(255), model);
-    request.input('serialNo', sql.VarChar(100), serialNo || '');
-    request.input('status', sql.VarChar(50), status || 'operational');
-    request.input('lastCalibrated', sql.VarChar(10), lastCalibrated || '');
-    request.input('nextService', sql.VarChar(10), nextService || '');
-    request.input('notes', sql.VarChar(sql.MAX), notes || '');
-
-    await request.query(`
-      INSERT INTO Equipment (id, labId, name, category, model, serialNo, status, lastCalibrated, nextService, notes)
-      VALUES (@id, @labId, @name, @category, @model, @serialNo, @status, @lastCalibrated, @nextService, @notes)
-    `);
-
-    res.status(201).json({ 
-      id, labId, name, category, model, serialNo, status, lastCalibrated, nextService, notes 
-    });
-  } catch (err) {
-    console.error('Error creating equipment:', err);
-    res.status(500).json({ error: 'Failed to create equipment' });
-  }
-});
-
-// PUT update equipment
-router.put('/:id', async (req, res) => {
-  const { labId, name, category, model, serialNo, status, lastCalibrated, nextService, notes } = req.body;
-
-  try {
-    const request = pool.request();
-    request.input('id', sql.VarChar(50), req.params.id);
-    request.input('labId', sql.VarChar(50), labId);
-    request.input('name', sql.VarChar(255), name);
-    request.input('category', sql.VarChar(100), category);
-    request.input('model', sql.VarChar(255), model);
-    request.input('serialNo', sql.VarChar(100), serialNo);
-    request.input('status', sql.VarChar(50), status);
-    request.input('lastCalibrated', sql.VarChar(10), lastCalibrated);
-    request.input('nextService', sql.VarChar(10), nextService);
-    request.input('notes', sql.VarChar(sql.MAX), notes);
-
-    await request.query(`
-      UPDATE Equipment 
-      SET labId = @labId, name = @name, category = @category, model = @model, 
-          serialNo = @serialNo, status = @status, lastCalibrated = @lastCalibrated, 
-          nextService = @nextService, notes = @notes
-      WHERE id = @id
-    `);
-
-    res.json({ 
-      id: req.params.id, labId, name, category, model, serialNo, status, lastCalibrated, nextService, notes 
-    });
-  } catch (err) {
-    console.error('Error updating equipment:', err);
-    res.status(500).json({ error: 'Failed to update equipment' });
-  }
-});
-
-// DELETE equipment
-router.delete('/:id', async (req, res) => {
-  try {
-    const request = pool.request();
-    request.input('id', sql.VarChar(50), req.params.id);
-
-    await request.query('DELETE FROM Equipment WHERE id = @id');
-
-    res.json({ message: 'Equipment deleted successfully' });
-  } catch (err) {
-    console.error('Error deleting equipment:', err);
-    res.status(500).json({ error: 'Failed to delete equipment' });
-  }
-});
 
 module.exports = router;

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../db');
+const { verifyToken } = require('../middleware/auth');
 
 // Helper function to fetch full booking details with nested lab and services
 async function getFullBooking({ bookingId, userId }) {
@@ -194,6 +195,190 @@ router.post('/', async (req, res) => {
         res.status(500).json({ error: 'Failed to create booking' });
     }
 });
+
+//post create a new booking, only authenticated users can create a new booking
+router.post('/addbooking', verifyToken, async (req, res) => {
+
+    const userId = req.user.userId;
+
+    const {
+        serviceId,
+        labId,
+        serviceType,
+        isWalkIn,
+        date,
+        time,
+        homeAddress,
+        addOns
+    } = req.body;
+
+    const addOnsValue =
+    Array.isArray(addOns) ? JSON.stringify(addOns) : null;
+
+    if (!serviceId) {
+        return res.status(400).json({
+            error: 'serviceId is required'
+        });
+    }
+
+    if (!labId) {
+        return res.status(400).json({
+            error: 'labId is required'
+        });
+    }
+
+    if (!date || !time) {
+        return res.status(400).json({
+            error: 'date and time are required'
+        });
+    }
+
+    const transaction = new sql.Transaction(pool);
+
+    try {
+
+        await transaction.begin();
+
+        // Verify lab service exists
+        const labServiceResult = await new sql.Request(transaction)
+            .input('labId', sql.Int, labId)
+            .input('serviceId', sql.Int, serviceId)
+            .query(`
+                SELECT
+                    id,
+                    price
+                FROM lab_services
+                WHERE labId = @labId
+                AND serviceId = @serviceId
+                AND isActive = 1
+            `);
+
+        if (labServiceResult.recordset.length === 0) {
+
+            await transaction.rollback();
+
+            return res.status(404).json({
+                error: 'Service not available for this lab'
+            });
+        }
+
+        const labService = labServiceResult.recordset[0];
+
+        const totalPrice = labService.price;
+
+        const reference =
+            `BK-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+        // -----------------------------------
+        // Create Booking
+        // -----------------------------------
+
+        const bookingResult = await new sql.Request(transaction)
+            .input('userId', sql.Int, userId)
+            .input('ref', sql.VarChar(100), reference)
+            .input('status', sql.VarChar(50), 'Pending')
+            .input('totalPrice', sql.Decimal(12, 6), totalPrice)
+            .input('createdBy', sql.NVarChar(255), userId.toString())
+            .query(`
+                INSERT INTO bookings
+                (
+                    userId,
+                    ref,
+                    status,
+                    totalPrice,
+                    createdBy
+                )
+                OUTPUT INSERTED.*
+                VALUES
+                (
+                    @userId,
+                    @ref,
+                    @status,
+                    @totalPrice,
+                    @createdBy
+                )
+            `);
+
+        const booking = bookingResult.recordset[0];
+
+        // -----------------------------------
+        // Create Booking Service
+        // -----------------------------------
+
+        const bookingServiceResult = await new sql.Request(transaction)
+            .input('bookingId', sql.Int, booking.id)
+            .input('ref', sql.VarChar(100), reference)
+            .input('serviceId', sql.Int, serviceId)
+            .input('labId', sql.Int, labId)
+            .input('total', sql.Decimal(12, 6), totalPrice)
+            .input('status', sql.VarChar(50), 'Pending')
+            .input('serviceType', sql.VarChar(100), serviceType || 'Lab Visit')
+            .input('isWalkIn', sql.Bit, isWalkIn || false)
+            .input('date', sql.Date, date)
+            .input('time', sql.VarChar(50), time)
+            .input('homeAddress', sql.VarChar(sql.MAX), homeAddress || null)
+            .input('addOns', sql.NVarChar(sql.MAX), addOnsValue)
+            .input('createdBy', sql.NVarChar(255), userId.toString())
+            .query(`
+                INSERT INTO booking_services
+                (
+                    bookingId,
+                    ref,
+                    serviceId,
+                    labId,
+                    total,
+                    status,
+                    serviceType,
+                    isWalkIn,
+                    date,
+                    time,
+                    homeAddress,
+                    addOns,
+                    createdBy
+                )
+                OUTPUT INSERTED.*
+                VALUES
+                (
+                    @bookingId,
+                    @ref,
+                    @serviceId,
+                    @labId,
+                    @total,
+                    @status,
+                    @serviceType,
+                    @isWalkIn,
+                    @date,
+                    @time,
+                    @homeAddress,
+                    @addOns,
+                    @createdBy
+                )
+            `);
+
+        await transaction.commit();
+
+        return res.status(201).json({
+            success: true,
+            message: 'Booking created successfully',
+            data: {
+                booking,
+                bookingService: bookingServiceResult.recordset[0]
+            }
+        });
+
+    } catch (err) {
+
+        await transaction.rollback();
+
+        console.error('Booking creation error:', err);
+
+        return res.status(500).json({
+            error: 'Failed to create booking'
+        });
+    }
+});
+
+
 
 // PUT update booking
 router.put('/:id', async (req, res) => {
