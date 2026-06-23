@@ -8,6 +8,8 @@ const { verifyToken, verifyAdmin  } = require('../../middleware/auth');
 
 
 // dashboard statistics for admin, only admin can access this route
+// GET /dashboard/stats
+// Admin dashboard statistics
 router.get('/stats', verifyAdmin, async (req, res) => {
 
     const labId = req.admin.labId;
@@ -19,38 +21,43 @@ router.get('/stats', verifyAdmin, async (req, res) => {
             .query(`
                 SELECT
 
-                    -- Upcoming Bookings
-                    SUM(
-                        CASE
-                            WHEN LOWER(LTRIM(RTRIM(status))) IN ('pending', 'upcoming', 'confirmed')
-                            THEN 1
-                            ELSE 0
-                        END
+                    -- Upcoming Bookings (Pending + Upcoming)
+                    (
+                        SELECT COUNT(*)
+                        FROM booking_services bs
+                        INNER JOIN bookings b
+                            ON bs.bookingId = b.id
+                        WHERE bs.labId = @labId
+                        AND b.currentStatusId IN (1, 2)
                     ) AS totalUpcomingBookings,
 
                     -- Completed Bookings
-                    SUM(
-                        CASE
-                            WHEN LOWER(LTRIM(RTRIM(status))) = 'completed'
-                            THEN 1
-                            ELSE 0
-                        END
+                    (
+                        SELECT COUNT(*)
+                        FROM booking_services bs
+                        INNER JOIN bookings b
+                            ON bs.bookingId = b.id
+                        WHERE bs.labId = @labId
+                        AND b.currentStatusId = 3
                     ) AS totalCompletedBookings,
 
-                    -- Total Revenue
-                    ISNULL(
-                        SUM(
-                            CASE
-                                WHEN LOWER(LTRIM(RTRIM(status))) = 'completed'
-                                THEN total
-                                ELSE 0
-                            END
-                        ),
-                        0
-                    ) AS totalRevenue
+                    -- Total Revenue (Completed Bookings Only)
+                    (
+                        SELECT ISNULL(SUM(bs.total), 0)
+                        FROM booking_services bs
+                        INNER JOIN bookings b
+                            ON bs.bookingId = b.id
+                        WHERE bs.labId = @labId
+                        AND b.currentStatusId = 3
+                    ) AS totalRevenue,
 
-                FROM booking_services
-                WHERE labId = @labId
+                    -- Total Equipment
+                    (
+                        SELECT COUNT(*)
+                        FROM equipment e
+                        WHERE e.labId = @labId
+                        AND e.isArchived = 0
+                    ) AS totalEquipment
             `);
 
         const stats = result.recordset[0];
@@ -59,13 +66,16 @@ router.get('/stats', verifyAdmin, async (req, res) => {
             success: true,
             data: {
                 totalUpcomingBookings:
-                    stats.totalUpcomingBookings || 0,
+                    Number(stats.totalUpcomingBookings || 0),
 
                 totalCompletedBookings:
-                    stats.totalCompletedBookings || 0,
+                    Number(stats.totalCompletedBookings || 0),
 
                 totalRevenue:
-                    Number(stats.totalRevenue || 0)
+                    Number(stats.totalRevenue || 0),
+
+                totalEquipment:
+                    Number(stats.totalEquipment || 0)
             }
         });
 
@@ -81,7 +91,7 @@ router.get('/stats', verifyAdmin, async (req, res) => {
 
 
 // Add a new service, only admin can create a new service belonging to their lab 
-router.post('/', verifyAdmin, async (req, res) => {
+router.post('/services', verifyAdmin, async (req, res) => {
 
     const labId = req.admin.labId;
     const adminId = req.admin.adminId;
@@ -168,7 +178,6 @@ router.post('/', verifyAdmin, async (req, res) => {
 
 
 // // GET bookings Returns only bookings belonging to the admin's lab
-
 router.get('/bookings', verifyAdmin, async (req, res) => {
 
     const labId = req.admin.labId;
@@ -186,9 +195,9 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
                     bs.labId,
 
                     b.userId,
+                    b.totalPrice,
 
                     bs.total,
-                    bs.status,
                     bs.serviceType,
                     bs.isWalkIn,
                     bs.date,
@@ -196,7 +205,8 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
                     bs.homeAddress,
                     bs.addOns,
 
-                   /* l.name AS labName, */
+                    b.currentStatusId,
+                    s.name AS statusName,
 
                     bs.createdAt,
                     bs.updatedAt
@@ -206,8 +216,8 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
                 INNER JOIN bookings b
                     ON bs.bookingId = b.id
 
-               /* INNER JOIN labs l
-                    ON bs.labId = l.id */
+                LEFT JOIN booking_statuses s
+                    ON b.currentStatusId = s.id
 
                 WHERE bs.labId = @labId
 
@@ -230,130 +240,130 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
     }
 });
 
-router.post('/', verifyAdmin, async (req, res) => {
+
+// GET /dashboard/bookings/available-for-results
+// Returns bookings that exist and do NOT yet have test results uploaded
+router.get('/bookings/available-for-results', verifyAdmin, async (req, res) => {
 
     const labId = req.admin.labId;
-    const adminId = req.admin.adminId;
 
-    const {
-        equipmentName,
-        model,
-        serialNumber,
-        lastCalibrated,
-        nextServiceDue,
-        category,
-        status,
-        notes
-    } = req.body;
+    try {
 
-    if (!equipmentName) {
-        return res.status(400).json({
-            error: 'equipmentName is required'
+        const result = await pool.request()
+            .input('labId', sql.Int, labId)
+            .query(`
+                SELECT DISTINCT
+                    b.id AS bookingId,
+                    b.ref AS bookingCode,
+                    bs.serviceType AS serviceName,
+                    u.firstName + ' ' + u.lastName AS patientName
+                FROM bookings b
+                INNER JOIN booking_services bs
+                    ON bs.bookingId = b.id
+                INNER JOIN users u
+                    ON b.userId = u.id
+                WHERE bs.labId = @labId
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM test_results tr
+                    WHERE tr.bookingId = b.id
+                )
+                ORDER BY b.id DESC
+            `);
+
+        return res.status(200).json({
+            success: true,
+            count: result.recordset.length,
+            data: result.recordset
+        });
+
+    } catch (err) {
+
+        console.error('Error fetching available bookings for results:', err);
+
+        return res.status(500).json({
+            error: 'Failed to fetch available bookings'
         });
     }
+});
 
-    if (!category) {
+
+// PATCH /dashboard/bookings/:id/status
+// Updates the status of a booking (currentStatusId)
+router.patch('/bookings/:id/status', verifyAdmin, async (req, res) => {
+
+    const labId = req.admin.labId;
+    const bookingId = parseInt(req.params.id, 10);
+    const { statusId } = req.body;
+
+    // -----------------------------
+    // VALIDATION
+    // -----------------------------
+    if (!statusId || ![1, 2, 3, 4].includes(Number(statusId))) {
         return res.status(400).json({
-            error: 'category is required'
+            error: 'statusId is required and must be 1 (Pending), 2 (Upcoming), 3 (Completed), or 4 (Cancelled)'
         });
     }
 
     try {
 
-        const transaction = new sql.Transaction(pool);
-
-        await transaction.begin();
-
-        const equipmentRequest = new sql.Request(transaction);
-
-        const equipmentResult = await equipmentRequest
+        // Verify booking exists and belongs to the admin's lab
+        const bookingCheck = await pool.request()
+            .input('bookingId', sql.Int, bookingId)
             .input('labId', sql.Int, labId)
-            .input('equipmentName', sql.NVarChar(255), equipmentName)
-            .input('model', sql.NVarChar(255), model || null)
-            .input('equipmentType', sql.NVarChar(255), category)
-            .input('serialNumber', sql.NVarChar(255), serialNumber || null)
-            .input('lastCalibrated', sql.Date, lastCalibrated || null)
-            .input('nextServiceDue', sql.Date, nextServiceDue || null)
-            .input('status', sql.NVarChar(100), status || 'Operational')
-            .input('notes', sql.NVarChar(sql.MAX), notes || null)
             .query(`
-                INSERT INTO equipment
-                (
-                    labId,
-                    equipmentName,
-                    model,
-                    equipmentType,
-                    serialNumber,
-                    lastCalibrated,
-                    nextServiceDue,
-                    currentStatus,
-                    notes,
-                    isActive,
-                    isArchived,
-                    createdAt
-                )
-                OUTPUT INSERTED.*
-                VALUES
-                (
-                    @labId,
-                    @equipmentName,
-                    @model,
-                    @equipmentType,
-                    @serialNumber,
-                    @lastCalibrated,
-                    @nextServiceDue,
-                    @status,
-                    @notes,
-                    1,
-                    0,
-                    SYSUTCDATETIME()
-                )
+                SELECT bs.id
+                FROM booking_services bs
+                WHERE bs.bookingId = @bookingId
+                AND bs.labId = @labId
             `);
 
-        const equipment = equipmentResult.recordset[0];
+        if (bookingCheck.recordset.length === 0) {
+            return res.status(404).json({
+                error: 'Booking not found'
+            });
+        }
 
-        await new sql.Request(transaction)
-            .input('equipmentId', sql.Int, equipment.id)
-            .input('newStatusId', sql.NVarChar(100), status || 'Operational')
-            .input('reason', sql.NVarChar(500), 'Equipment created')
-            .input('changedBy', sql.Int, adminId)
+        // Update the booking status and updatedAt timestamp
+        await pool.request()
+            .input('bookingId', sql.Int, bookingId)
+            .input('currentStatusId', sql.Int, Number(statusId))
             .query(`
-                INSERT INTO equipment_status_log
-                (
-                    equipmentId,
-                    previousStatusId,
-                    newStatusId,
-                    reason,
-                    changed_by,
-                    changed_at
-                )
-                VALUES
-                (
-                    @equipmentId,
-                    NULL,
-                    @newStatusId,
-                    @reason,
-                    @changedBy,
-                    SYSUTCDATETIME()
-                )
+                UPDATE bookings
+                SET currentStatusId = @currentStatusId,
+                    updatedAt = GETDATE()
+                WHERE id = @bookingId
             `);
 
-        await transaction.commit();
+        // Fetch the updated booking to return the new status name
+        const updatedBooking = await pool.request()
+            .input('bookingId', sql.Int, bookingId)
+            .query(`
+                SELECT
+                    b.id,
+                    b.currentStatusId,
+                    s.name AS statusName
+                FROM bookings b
+                LEFT JOIN booking_statuses s
+                    ON b.currentStatusId = s.id
+                WHERE b.id = @bookingId
+            `);
 
-        return res.status(201).json({
+        return res.status(200).json({
             success: true,
-            message: 'Equipment created successfully',
-            data: equipment
+            message: 'Booking status updated successfully',
+            data: updatedBooking.recordset[0]
         });
 
     } catch (err) {
 
-        console.error('Equipment creation error:', err);
+        console.error('Error updating booking status:', err);
 
         return res.status(500).json({
-            error: 'Failed to create equipment'
+            error: 'Failed to update booking status'
         });
     }
 });
+
 
 module.exports = router;
