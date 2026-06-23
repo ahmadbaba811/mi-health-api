@@ -37,7 +37,7 @@ router.post('/', async (req, res) => {
                 servicesRequest.input('labId', sql.VarChar(50), lab.id.toString());
 
                 const servicesResult = await servicesRequest.query(`
-          SELECT s.id, s.name, ls.price, ls.duration, s.category, s.description, ls.preparation
+          SELECT s.id, ls.serviceId as labServiceId, s.name, ls.price, ls.duration, s.category, s.description, ls.preparation
           FROM lk_Services s
           INNER JOIN lab_services ls ON s.id = ls.serviceId
           WHERE ls.labId = @labId

@@ -3,6 +3,17 @@ const router = express.Router();
 const { pool, sql } = require('../db');
 const { verifyToken } = require('../middleware/auth');
 
+const HOLD_MINUTES = 10;
+
+// Result codes returned by stored procedures
+const RESULT = {
+    SUCCESS: 0,
+    SLOT_FULL: 1,
+    SLOT_NOT_FOUND: 2,
+    HOLD_EXPIRED_OR_INVALID: 1,
+};
+
+
 // Helper function to fetch full booking details with nested lab and services
 async function getFullBooking({ bookingId, userId }) {
 
@@ -54,7 +65,7 @@ async function getFullBooking({ bookingId, userId }) {
             labServicesRequest.input('labId', sql.Int, booking.labId);
 
             const labServicesResult = await labServicesRequest.query(`
-                SELECT s.id, s.name, ls.price, ls.duration, s.category,
+                SELECT s.id, ls.serviceId as labServiceId, s.name, ls.price, ls.duration, s.category,
                 s.description, ls.preparation FROM lk_services s
                 INNER JOIN lab_services ls ON s.id = ls.serviceId
                 WHERE ls.labId = @labId
@@ -147,6 +158,155 @@ router.get('/status/:status', async (req, res) => {
     }
 });
 
+// POST hold booking for 10 minutes
+router.post('/hold', async (req, res) => {
+    const { userId, labId, slotDate, timeSlot } = req.body;
+    if (!userId || !labId || !slotDate || !timeSlot) {
+        console.log('here')
+        return res.status(400).json({ error: 'labId, slotDate and timeSlot are required.' });
+    }
+
+    try {
+        const result = await pool.request()
+            .input('userId', sql.Int, userId)
+            .input('labId', sql.Int, labId)
+            .input('slotDate', sql.Date, new Date(slotDate))
+            .input('timeSlot', sql.Time(0), timeSlot)
+            .input('holdMinutes', sql.Int, HOLD_MINUTES)
+            .execute('usp_hold_slot');
+
+        const row = result.recordset[0];
+
+        switch (row.resultCode) {
+            case RESULT.SUCCESS:
+                return res.status(200).json({
+                    holdId: row.holdId,
+                    expiresAt: row.expiresAt,
+                    expiresInSeconds: HOLD_MINUTES * 60,
+                    message: `Slot held for ${HOLD_MINUTES} minutes. Complete your booking before it expires.`,
+                });
+
+            case RESULT.SLOT_FULL:
+                return res.status(409).json({ error: 'This time slot is fully booked. Please choose another.' });
+
+            case RESULT.SLOT_NOT_FOUND:
+                return res.status(404).json({ error: 'Time slot not found or is unavailable.' });
+
+            default:
+                return res.status(500).json({ error: 'Unexpected error reserving slot.' });
+        }
+    } catch (err) {
+        console.error('[holdSlot] DB error:', err);
+        return res.status(500).json({ error: 'Failed to reserve slot. Please try again.' });
+    }
+})
+
+// POST confirm booking i.e convert held booking to full booking after payment
+router.post('/confirm', async (req, res) => {
+    const bookings = req.body.data
+    const user = req.body.user
+    const results_array = []
+    if (bookings.length > 0) {
+        Promise.all(bookings.map(async (b, index) => {
+            const userId = user.user.id;
+            const { id: labId } = b.lab;
+            const services = b.services;
+            const addOns = b.addOns?.join(", ");
+            const { holdId, ref, isWalkIn, status } = b;
+            const slotDate = b.date === "" ? null : b.date
+            const slotTime = b.time === "" ? null : b.time
+            const homeAddress = b.homeAddress ?? null;
+            const postCode = b.postCode ?? null;
+            const totalPrice = b.total
+        
+
+            // Basic validation
+            if (!labId || !totalPrice || !Array.isArray(services) || !services.length) {
+                // return res.status(400).json({ error: 'Missing required booking fields.' });
+                console.log(ref, 400, 'Missing required booking fields.', holdId , labId , totalPrice , slotDate , slotTime , Array.isArray(services) , services.length)
+                results_array.push({
+                    status: 400,
+                    error: 'Missing required booking fields.'
+                })
+            }
+
+            if (totalPrice < 0) {
+                // return res.status(400).json({ error: 'totalPrice must be non-negative.' });
+                console.log(ref, 400, 'totalPrice must be non-negative.')
+                results_array.push({
+                    status: 400,
+                    error: 'totalPrice must be non-negative.'
+                })
+            }
+
+            try {
+
+                const result = await pool.request()
+                    .input('holdId', sql.Int, holdId)
+                    .input('userId', sql.Int, userId)
+                    .input('ref', sql.NVarChar(50), ref ?? null)
+                    // .input('labId', sql.Int, labId)
+                    .input('totalPrice', sql.Decimal(12, 6), totalPrice)
+                    .input('isWalkIn', sql.Bit, isWalkIn ? 1 : 0)
+                    // .input('slotDate', sql.Date, new Date(slotDate))
+                    // .input('slotTime', sql.Time(0), slotTime)
+                    .input('homeAddress', sql.NVarChar(sql.MAX), homeAddress ?? null)
+                    .input('postCode', sql.NVarChar(50), postCode ?? null)
+                    .input('addOns', sql.NVarChar(50), addOns ?? null)
+                    .input('createdBy', sql.NVarChar(255), String(userId))
+                    .input('services', sql.NVarChar(sql.MAX), JSON.stringify(services))
+                    .execute('usp_confirm_booking');
+
+                const row = result.recordset[0];
+
+                if (row.resultCode === RESULT.SUCCESS) {
+                    // return res.status(201).json({
+                    //     bookingId: row.bookingId,
+                    //     message: 'Booking confirmed successfully.',
+                    // });
+                    console.log(ref, 201)
+                    results_array.push({
+                        status: 201,
+                        bookingId: row.bookingId,
+                        message: 'Booking confirmed successfully.',
+                        labId: labId
+                    })
+                }
+
+                // resultCode 1 = hold expired or doesn't belong to this user
+                // return res.status(410).json({
+                //     error: 'Your slot reservation has expired or is invalid. Please select a new time slot.',
+                // });
+                console.log(ref, '410', 'Your slot reservation has expired')
+                results_array.push({
+                    status: 410,
+                    error: 'Your slot reservation has expired or is invalid. Please select a new time slot.',
+                    labId: labId
+                })
+
+            } catch (err) {
+                console.error('[confirmBooking] DB error:', err);
+                // return res.status(500).json({ error: 'Failed to confirm booking. Please try again.' });
+                results_array.push({
+                    status: 410,
+                    error: 'Failed to confirm booking. Please try again.',
+                    labId: labId
+                })
+            }
+
+            if (index + 1 === bookings.length) {
+                console.log('complete')
+                console.log(results_array)
+                res.json(results_array)
+            }
+
+        }))
+    }
+
+})
+
+
+
 // POST create new booking
 router.post('/', async (req, res) => {
     const { id, ref, labId, date, time, status, total, createdAt, addOns, isWalkIn, homeAddress, services } = req.body;
@@ -213,7 +373,7 @@ router.post('/addbooking', verifyToken, async (req, res) => {
     } = req.body;
 
     const addOnsValue =
-    Array.isArray(addOns) ? JSON.stringify(addOns) : null;
+        Array.isArray(addOns) ? JSON.stringify(addOns) : null;
 
     if (!serviceId) {
         return res.status(400).json({

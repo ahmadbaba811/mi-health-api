@@ -25,6 +25,27 @@ router.post('/lab-dates', async (req, res) => {
 });
 
 
+router.post('/lab-times', async (req, res) => {
+  let { labId, slotDate } = req.body
+
+  try {
+    const request = pool.request();
+    request.input('labId', sql.Int, labId);
+    request.input('slotDate', sql.DateTime2, slotDate);
+
+    const result = await request.query(`SELECT distinct labId, slotDate, timeSlot FROM time_slot_availability WHERE labId = @labId AND slotDate >= CAST(@slotDate AS DATE) AND isAvailable = 1`);
+    const _times = result.recordset
+    res.json(_times.map(row => ({
+      ...row,
+      slotDate: formatDate(row.slotDate)
+    })));
+  } catch (err) {
+    console.error('Error fetching time slots:', err);
+    res.status(500).json({ error: 'Failed to fetch time slots' });
+  }
+});
+
+
 // GET all available time slots
 router.get('/', async (req, res) => {
   try {
