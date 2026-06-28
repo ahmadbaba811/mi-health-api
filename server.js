@@ -25,6 +25,10 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok', env: process.env.NODE_ENV });
 });
 
+// Serve uploaded files statically
+const path = require('path');
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 app.use('/users', usersRouter);
 app.use('/auth', authRouter);
 app.use('/admin-auth', adminAuthRouter);
