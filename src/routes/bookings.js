@@ -204,6 +204,8 @@ router.post('/hold', async (req, res) => {
 // POST confirm booking i.e convert held booking to full booking after payment
 router.post('/confirm', async (req, res) => {
     const bookings = req.body.data
+    console.log(bookings.length>0)
+
     const user = req.body.user
     const results_array = []
     if (bookings.length > 0) {
@@ -218,19 +220,18 @@ router.post('/confirm', async (req, res) => {
             const homeAddress = b.homeAddress ?? null;
             const postCode = b.postCode ?? null;
             const totalPrice = b.total
-        
 
             // Basic validation
             if (!labId || !totalPrice || !Array.isArray(services) || !services.length) {
                 // return res.status(400).json({ error: 'Missing required booking fields.' });
-                console.log(ref, 400, 'Missing required booking fields.', holdId , labId , totalPrice , slotDate , slotTime , Array.isArray(services) , services.length)
+                console.log(ref, 400, 'Missing required booking fields.', holdId, labId, totalPrice, slotDate, slotTime, Array.isArray(services), services.length)
                 results_array.push({
                     status: 400,
                     error: 'Missing required booking fields.'
                 })
             }
 
-            if (totalPrice < 0) {
+            if (totalPrice <= 0) {
                 // return res.status(400).json({ error: 'totalPrice must be non-negative.' });
                 console.log(ref, 400, 'totalPrice must be non-negative.')
                 results_array.push({
@@ -245,11 +246,9 @@ router.post('/confirm', async (req, res) => {
                     .input('holdId', sql.Int, holdId)
                     .input('userId', sql.Int, userId)
                     .input('ref', sql.NVarChar(50), ref ?? null)
-                    // .input('labId', sql.Int, labId)
+                    .input('walkInLabId', sql.Int, labId)
                     .input('totalPrice', sql.Decimal(12, 6), totalPrice)
                     .input('isWalkIn', sql.Bit, isWalkIn ? 1 : 0)
-                    // .input('slotDate', sql.Date, new Date(slotDate))
-                    // .input('slotTime', sql.Time(0), slotTime)
                     .input('homeAddress', sql.NVarChar(sql.MAX), homeAddress ?? null)
                     .input('postCode', sql.NVarChar(50), postCode ?? null)
                     .input('addOns', sql.NVarChar(50), addOns ?? null)
@@ -277,12 +276,14 @@ router.post('/confirm', async (req, res) => {
                 // return res.status(410).json({
                 //     error: 'Your slot reservation has expired or is invalid. Please select a new time slot.',
                 // });
-                console.log(ref, '410', 'Your slot reservation has expired')
-                results_array.push({
-                    status: 410,
-                    error: 'Your slot reservation has expired or is invalid. Please select a new time slot.',
-                    labId: labId
-                })
+                if (parseInt(isWalkIn) > 0) {
+                    console.log(ref, '410', 'Your slot reservation has expired')
+                    results_array.push({
+                        status: 410,
+                        error: 'Your slot reservation has expired or is invalid. Please select a new time slot.',
+                        labId: labId
+                    })
+                }
 
             } catch (err) {
                 console.error('[confirmBooking] DB error:', err);
@@ -295,12 +296,15 @@ router.post('/confirm', async (req, res) => {
             }
 
             if (index + 1 === bookings.length) {
-                console.log('complete')
-                console.log(results_array)
                 res.json(results_array)
             }
 
         }))
+    } else {
+        res.json([{
+            status: 404,
+            error: 'No bookings to confirm.'
+        }])
     }
 
 })

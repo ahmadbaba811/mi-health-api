@@ -6,7 +6,6 @@ const { formatTime, formatDate } = require('../middleware/helpers');
 
 router.post('/lab-dates', async (req, res) => {
   let labIds = req.body.join(',')
-
   try {
     const request = pool.request();
     request.input('labIds', sql.VarChar(50), labIds);
