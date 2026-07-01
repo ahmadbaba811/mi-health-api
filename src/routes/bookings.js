@@ -49,7 +49,7 @@ async function getFullBooking({ bookingId, userId }) {
         labRequest.input('labId', sql.Int, booking.labId);
 
         const labResult = await labRequest.query(`
-            SELECT id, name, area, address, distance, rating, reviewCount, openTime, closeTime, isOpen, certifications, phone, image FROM Labs WHERE id = @labId
+            SELECT id, name, area, lga, state, address, distance, rating, reviewCount, openTime, closeTime, isOpen, certifications, phone, image FROM Labs WHERE id = @labId
         `);
 
         if (labResult.recordset.length > 0) {
@@ -203,13 +203,17 @@ router.post('/hold', async (req, res) => {
 
 // POST confirm booking i.e convert held booking to full booking after payment
 router.post('/confirm', async (req, res) => {
-    const bookings = req.body.data
-    console.log(bookings.length>0)
+    const bookings = req.body.data;
+    const dt = req.body;
+    const {subTotal, addOnsTotal} = req.body
+    const labOnlySubTotal = subTotal - addOnsTotal
 
     const user = req.body.user
     const results_array = []
+
+    let lineItems = [];
     if (bookings.length > 0) {
-        Promise.all(bookings.map(async (b, index) => {
+        await Promise.all(bookings.map(async (b, index) => {
             const userId = user.user.id;
             const { id: labId } = b.lab;
             const services = b.services;
@@ -241,7 +245,6 @@ router.post('/confirm', async (req, res) => {
             }
 
             try {
-
                 const result = await pool.request()
                     .input('holdId', sql.Int, holdId)
                     .input('userId', sql.Int, userId)
@@ -254,16 +257,21 @@ router.post('/confirm', async (req, res) => {
                     .input('addOns', sql.NVarChar(50), addOns ?? null)
                     .input('createdBy', sql.NVarChar(255), String(userId))
                     .input('services', sql.NVarChar(sql.MAX), JSON.stringify(services))
+                    .input('gatewayProvider', sql.NVarChar(50), ref)
+                    .input('gatewayTransactionId', sql.NVarChar(50), ref)
                     .execute('usp_confirm_booking');
 
                 const row = result.recordset[0];
 
+
                 if (row.resultCode === RESULT.SUCCESS) {
-                    // return res.status(201).json({
-                    //     bookingId: row.bookingId,
-                    //     message: 'Booking confirmed successfully.',
-                    // });
-                    console.log(ref, 201)
+                    lineItems.push({ bookingId: row.bookingId, amount: totalPrice, type: "lab_subtotal", description: `Booking fee for ${b.lab.name}`, addOnId: null })
+
+                    // const add_ons_items = b.addOns?.map(x => {
+                    //     return { bookingId: row.bookingId, amount: x.amount, type: "lab_add_on", description: `Add On fee for ${b.lab.name}`, addOnId: x.id }
+                    // })
+                    // lineItems.push(add_ons_items)
+
                     results_array.push({
                         status: 201,
                         bookingId: row.bookingId,
@@ -272,33 +280,68 @@ router.post('/confirm', async (req, res) => {
                     })
                 }
 
-                // resultCode 1 = hold expired or doesn't belong to this user
-                // return res.status(410).json({
-                //     error: 'Your slot reservation has expired or is invalid. Please select a new time slot.',
-                // });
-                if (parseInt(isWalkIn) > 0) {
-                    console.log(ref, '410', 'Your slot reservation has expired')
+
+                if (row.resultCode === RESULT.HOLD_EXPIRED_OR_INVALID) {
+                    if (isWalkIn === false) {
+                        console.log(ref, '410', 'Your slot reservation has expired')
+                        results_array.push({
+                            status: 410,
+                            error: 'Your slot reservation has expired or is invalid. Please select a new time slot.',
+                            labId: labId
+                        })
+                    }
+                }
+                if (row.resultCode === 5) {
+                    console.log(ref, '410', 'This payment has already been processed.')
                     results_array.push({
                         status: 410,
-                        error: 'Your slot reservation has expired or is invalid. Please select a new time slot.',
+                        error: 'This booking has already been processed.',
                         labId: labId
                     })
                 }
 
             } catch (err) {
                 console.error('[confirmBooking] DB error:', err);
-                // return res.status(500).json({ error: 'Failed to confirm booking. Please try again.' });
                 results_array.push({
-                    status: 410,
+                    status: 500,
                     error: 'Failed to confirm booking. Please try again.',
                     labId: labId
                 })
             }
 
             if (index + 1 === bookings.length) {
+                console.log(lineItems)
+                const booking_outcome = results_array[0]
+                console.log(results_array)
+                // RECORD PAYMENTS BEFORE SENDING BACK RESPONSE
+
+                if (booking_outcome?.status === 201) {
+                    const result = await pool.request()
+                        .input('ref', sql.NVarChar(50), ref ?? null)
+                        .input('userId', sql.Int, userId)
+                        .input('labId', sql.Int, labId)
+                        .input('subTotal', sql.Decimal(12, 6), labOnlySubTotal)
+                        .input('currency', sql.NVarChar(50), "NGN")
+                        .input('paymentMethod', sql.NVarChar(50), "paystack")
+                        .input('gatewayProvider', sql.NVarChar(50), ref)
+                        .input('gatewayTransactionId', sql.NVarChar(50), ref)
+                        .input('gatewayReference', sql.NVarChar(50), ref)
+                        .input('serviceFee', sql.Decimal(12, 6), dt.serviceFee)
+                        .input('VAT', sql.Decimal(12, 6), dt.vat)
+                        .input('createdBy', sql.NVarChar(255), String(userId))
+                        .input('lineItems', sql.NVarChar(sql.MAX), JSON.stringify(lineItems))
+                        .execute('usp_record_payment');
+
+                    const row = result.recordset[0];
+
+                    if (row.resultCode !== 0) {
+                        console.log(row)
+                        // SEND ADMIN AN EMAIL NOTIFICATION WITH THE FAILED PAYMENT RECORD DETAILS
+                        const b = { lineItems: lineItems, vat: dt.vat, serviceFee: dt.serviceFee }
+                    }
+                }
                 res.json(results_array)
             }
-
         }))
     } else {
         res.json([{
@@ -306,10 +349,109 @@ router.post('/confirm', async (req, res) => {
             error: 'No bookings to confirm.'
         }])
     }
-
 })
 
 
+// POST update booking date and time
+router.put('/update-booking', async (req, res) => {
+
+    const booking = req.body.data;
+    const user = req.body.user;
+    const userId = user.user.id;
+
+    const { id: labId } = booking.lab;
+    const { bookingId, newHoldId } = booking;
+
+    if (!bookingId || !newHoldId || !labId) {
+        return res.status(400).json({
+            error: 'Missing required fields: bookingId, newHoldId and labId are required.'
+        });
+    }
+
+    try {
+        const result = await pool.request()
+            .input('bookingId', sql.Int, bookingId)
+            .input('newHoldId', sql.Int, newHoldId)
+            .input('userId', sql.Int, userId)
+            .input('labId', sql.Int, labId)
+            .execute('usp_update_booking');
+
+        const row = result.recordset[0];
+
+        switch (row.resultCode) {
+            case 0:
+                return res.status(200).json({
+                    bookingId,
+                    message: row.reason,
+                    labId
+                });
+
+            case 1:
+                return res.status(404).json({ error: row.reason, labId });
+
+            case 2:
+                return res.status(410).json({ error: row.reason, labId });
+
+            case 3:
+                return res.status(400).json({ error: row.reason, labId });
+
+            case 4:
+                return res.status(409).json({ error: row.reason, labId });
+
+            default:
+                return res.status(500).json({ error: 'Unexpected error updating booking.' });
+        }
+
+    } catch (err) {
+        console.error('[updateBooking] DB error:', err);
+        return res.status(500).json({ error: 'Failed to update booking. Please try again.' });
+    }
+});
+
+
+router.post('/cancel-booking', async (req, res) => {
+    const booking = req.body.data;
+    const user = req.body.user;
+    const userId = user.user.id;
+
+    const { id: labId } = booking.lab;
+    const { bookingId } = booking;
+
+    if (!bookingId || !labId) {
+        return res.status(400).json({
+            error: 'Missing required fields: bookingId and labId are required.'
+        });
+    }
+
+    try {
+        const result = await pool.request()
+            .input('bookingId', sql.Int, bookingId)
+            .input('userId', sql.Int, userId)
+            .input('labId', sql.Int, labId)
+            .execute('usp_cancel_booking');
+
+        const row = result.recordset[0];
+
+        switch (row.resultCode) {
+            case 0:
+                return res.status(200).json({
+                    bookingId,
+                    message: row.reason,
+                    labId
+                });
+
+            case 1:
+                return res.status(404).json({ error: row.reason, labId });
+
+            default:
+                return res.status(500).json({ error: 'Unexpected error cancelling booking.' });
+        }
+
+    } catch (err) {
+        console.error('[cancelBooking] DB error:', err);
+        return res.status(500).json({ error: 'Failed to cancel booking. Please try again.' });
+    }
+});
 
 // POST create new booking
 /*router.post('/', async (req, res) => {

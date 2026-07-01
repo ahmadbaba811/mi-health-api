@@ -97,8 +97,8 @@ router.post('/search', async (req, res) => {
 
         request.input("lat", userLocation.lat);
         request.input("lng", userLocation.lng);
-        select = select + ` ,ROUND(a.Location.STDistance(geography::Point(@lat, @lng, 4326) )/1000, 1) AS distance`
-        whereClauses.push(` a.Location.STDistance(geography::Point(@lat, @lng, 4326) ) <= ${parseInt(userDistance) <= 0 ? 20000 : parseInt(userDistance)} `);
+        select = select + ` ,ROUND(a.location.STDistance(geography::Point(@lat, @lng, 4326) )/1000, 1) AS distance`
+        whereClauses.push(` a.location.STDistance(geography::Point(@lat, @lng, 4326) ) <= ${parseInt(userDistance) <= 0 ? 20000 : parseInt(userDistance)} `);
     }
 
     let query = `${select} 
@@ -149,7 +149,7 @@ router.post('/search', async (req, res) => {
                 fuzzyWhereClauses.push(where);
 
                 if (useLocation === true) {
-                    fuzzyWhereClauses.push(`a.Location.STDistance(geography::Point(@lat,@lng,4326)) <= ${parseInt(userDistance) <= 0 ? 20000 : parseInt(userDistance)}`);
+                    fuzzyWhereClauses.push(`a.location.STDistance(geography::Point(@lat,@lng,4326)) <= ${parseInt(userDistance) <= 0 ? 20000 : parseInt(userDistance)}`);
                 }
 
                 let fuzzyQuery = `${select}

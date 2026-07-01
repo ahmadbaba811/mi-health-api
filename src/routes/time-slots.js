@@ -10,7 +10,7 @@ router.post('/lab-dates', async (req, res) => {
     const request = pool.request();
     request.input('labIds', sql.VarChar(50), labIds);
 
-    const result = await request.query(`SELECT id, labId, slotDate, timeSlot, isAvailable, capacity FROM time_slot_availability WHERE labId in (${labIds}) AND slotDate >= CAST(GETDATE() AS DATE)`);
+    const result = await request.query(`SELECT id, labId, slotDate, timeSlot, isAvailable, capacity FROM time_slot_availability WHERE labId in (${labIds}) AND slotDate >= CAST(GETDATE() AS DATE) AND isAvailable=1`);
     const dates = result.recordset
     res.json(dates.map(row => ({
       ...row,
