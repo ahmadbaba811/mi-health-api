@@ -41,16 +41,18 @@ app.use('/bookings', bookingsRouter);
 app.use('/equipment', equipmentRouter);
 app.use('/test-result', testResultRouter);
 
-const port = parseInt(process.env.PORT, 10);
+const port = parseInt(process.env.PORT, 10)|| 5000 ;
 
 // Ensure DB connection is attempted before starting
 poolConnect
   .then(() => {
+    console.log("Database connected successfully");
+
     app.listen(port, () => {
       console.log(`Server listening on port ${port}`);
     });
   })
   .catch((err) => {
-    console.error('Failed to connect to DB, server will not start.', err);
+    console.error("DB connection failed:", err);
     process.exit(1);
   });

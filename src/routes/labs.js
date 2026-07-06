@@ -5,6 +5,18 @@ const { formatTime, findClosestSearch } = require('../middleware/helpers');
 const { Int } = require('mssql');
 
 // GET all labs
+router.get('/categories', async (req, res) => {
+    try {
+        const request = pool.request();
+        const result = await request.query(`SELECT DISTINCT category from lk_services order by category ASC`);
+        res.json(result.recordset)
+
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch categgories' });
+    }
+})
+
+
 router.post('/', async (req, res) => {
 
     const { page, recordSize } = req.body;

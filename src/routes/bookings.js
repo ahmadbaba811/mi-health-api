@@ -205,8 +205,8 @@ router.post('/hold', async (req, res) => {
 router.post('/confirm', async (req, res) => {
     const bookings = req.body.data;
     const dt = req.body;
-    const {subTotal, addOnsTotal} = req.body
-    const labOnlySubTotal = subTotal - addOnsTotal
+    const { subTotal, addOnsTotal } = req.body
+    const labOnlySubTotal = subTotal
 
     const user = req.body.user
     const results_array = []
@@ -224,7 +224,9 @@ router.post('/confirm', async (req, res) => {
             const homeAddress = b.homeAddress ?? null;
             const postCode = b.postCode ?? null;
             const totalPrice = b.total
-
+            const labServiceTotal = b.labServiceTotal
+            const labAddOnDetails = b.labAddOnDetails
+            
             // Basic validation
             if (!labId || !totalPrice || !Array.isArray(services) || !services.length) {
                 // return res.status(400).json({ error: 'Missing required booking fields.' });
@@ -265,12 +267,12 @@ router.post('/confirm', async (req, res) => {
 
 
                 if (row.resultCode === RESULT.SUCCESS) {
-                    lineItems.push({ bookingId: row.bookingId, amount: totalPrice, type: "lab_subtotal", description: `Booking fee for ${b.lab.name}`, addOnId: null })
+                    lineItems.push({ bookingId: row.bookingId, amount: labServiceTotal, type: "lab_subtotal", description: `Booking fee for ${b.lab.name}`, addOnId: null })
 
-                    // const add_ons_items = b.addOns?.map(x => {
-                    //     return { bookingId: row.bookingId, amount: x.amount, type: "lab_add_on", description: `Add On fee for ${b.lab.name}`, addOnId: x.id }
-                    // })
-                    // lineItems.push(add_ons_items)
+                    const add_ons_items = labAddOnDetails?.map(x => {
+                        return { bookingId: row.bookingId, amount: x.price, type: "lab_add_on", description: `Add On fee for ${b.lab.name}`, addOnId: x.id }
+                    })
+                    lineItems.push(...add_ons_items)
 
                     results_array.push({
                         status: 201,
@@ -310,17 +312,16 @@ router.post('/confirm', async (req, res) => {
             }
 
             if (index + 1 === bookings.length) {
-                console.log(lineItems)
                 const booking_outcome = results_array[0]
-                console.log(results_array)
-                // RECORD PAYMENTS BEFORE SENDING BACK RESPONSE
 
+                // RECORD PAYMENTS BEFORE SENDING BACK RESPONSE
+                
                 if (booking_outcome?.status === 201) {
                     const result = await pool.request()
                         .input('ref', sql.NVarChar(50), ref ?? null)
                         .input('userId', sql.Int, userId)
                         .input('labId', sql.Int, labId)
-                        .input('subTotal', sql.Decimal(12, 6), labOnlySubTotal)
+                        .input('subTotal', sql.Decimal(12, 6), totalPrice)
                         .input('currency', sql.NVarChar(50), "NGN")
                         .input('paymentMethod', sql.NVarChar(50), "paystack")
                         .input('gatewayProvider', sql.NVarChar(50), ref)

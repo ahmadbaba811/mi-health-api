@@ -39,7 +39,7 @@ async function isEmailRegistered(email) {
 
 // POST /register  Account creation endpoint for Lab Admins
 router.post('/register', async (req, res) => {
- 
+
   const { labId, email, password, confirmPassword, firstName, lastName, phone } = req.body;
 
   const validationErrors = validateRegisterInput(email, password, confirmPassword);
@@ -66,7 +66,7 @@ router.post('/register', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const request = pool.request();
-    request.input('labId', sql.Int, labId); 
+    request.input('labId', sql.Int, labId);
     request.input('email', sql.VarChar(255), sanitizedEmail);
     request.input('passwordHash', sql.VarChar(512), passwordHash);
     request.input('firstName', sql.VarChar(255), firstName);
@@ -74,9 +74,9 @@ router.post('/register', async (req, res) => {
     request.input('phone', sql.VarChar(255), phone);
     request.input('isActive', sql.Bit, 1);
     request.input('failedLoginCount', sql.Int, 0);
-    request.input('createdBy', sql.VarChar(255), 'System'); 
+    request.input('createdBy', sql.VarChar(255), 'System');
 
-    
+
     await request.query(`
       INSERT INTO lab_admins (
         labId, firstName, lastName, email, phone, passwordHash, 
@@ -88,7 +88,7 @@ router.post('/register', async (req, res) => {
       )
     `);
 
-   
+
     const fetchRequest = pool.request();
     fetchRequest.input('email', sql.VarChar(255), sanitizedEmail);
     const fetchResult = await fetchRequest.query(`
@@ -117,114 +117,107 @@ router.post('/register', async (req, res) => {
 });
 
 router.post('/login', async (req, res) => {
-    const { labId, email, password } = req.body;
+  const { labId, email, password } = req.body;
 
-    // Validation
-    if (!labId || !email || !password) {
-        return res.status(400).json({
-            error: 'labId, email and password are required'
-        });
-    }
+  // Validation
+  if (!email || !password) {
+    return res.status(400).json({
+      error: 'email and password are required'
+    });
+  }
 
-    const sanitizedEmail = email.trim().toLowerCase();
+  const sanitizedEmail = email.trim().toLowerCase();
 
-    try {
+  try {
 
-        const request = pool.request();
+    const request = pool.request();
 
-        request.input('labId', sql.Int, labId);
-        request.input('email', sql.VarChar(255), sanitizedEmail);
+    // request.input('labId', sql.Int, labId);
+    request.input('email', sql.VarChar(255), sanitizedEmail);
 
-        const result = await request.query(`
-            SELECT
-                id,
-                labId,
-                firstName,
-                lastName,
-                email,
-                passwordHash,
-                isActive,
-                failedLoginCount
-            FROM lab_admins
-            WHERE labId = @labId
-            AND email = @email
+    const result = await request.query(`
+            SELECT a.id, labId, firstName, lastName, email, passwordHash, a.isActive, failedLoginCount, b.name
+            FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
+            WHERE a.email = @email
         `);
 
-        // Admin not found
-        if (result.recordset.length === 0) {
-            return res.status(401).json({
-                error: 'Invalid credentials'
-            });
-        }
+    // Admin not found
+    if (result.recordset.length === 0) {
+      return res.status(401).json({
+        error: 'Invalid credentials'
+      });
+    }
 
-        const admin = result.recordset[0];
+    const admin = result.recordset[0];
 
-        // Account disabled
-        if (!admin.isActive) {
-            return res.status(403).json({
-                error: 'Account is inactive'
-            });
-        }
+    // Account disabled
+    if (!admin.isActive) {
+      return res.status(403).json({
+        error: 'Account is inactive'
+      });
+    }
 
-        // Password verification
-        const passwordMatch = await bcrypt.compare(
-            password,
-            admin.passwordHash
-        );
+    // Password verification
+    const passwordMatch = await bcrypt.compare(
+      password,
+      admin.passwordHash
+    );
 
-        if (!passwordMatch) {
-            return res.status(401).json({
-                error: 'Invalid credentials'
-            });
-        }
+    if (!passwordMatch) {
+      return res.status(401).json({
+        error: 'Invalid credentials'
+      });
+    }
 
-        // Generate JWT
-        const token = jwt.sign(
-            {
-                adminId: admin.id,
-                labId: admin.labId,
-                email: admin.email,
-                role: 'LabAdmin'
-            },
-            process.env.JWT_SECRET,
-            {
-                expiresIn: '24h',
-                issuer: 'mi-health-api',
-                audience: 'mi-health-admin'
-            }
-        );
 
-        // Update last login timestamp
-        await pool.request()
-            .input('id', sql.Int, admin.id)
-            .query(`
+    // Generate JWT
+    const token = jwt.sign(
+      {
+        adminId: admin.id,
+        labId: admin.labId,
+        email: admin.email,
+        role: 'LabAdmin'
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: '24h',
+        issuer: 'mi-health-api',
+        audience: 'mi-health-admin'
+      }
+    );
+
+    // Update last login timestamp
+    await pool.request()
+      .input('id', sql.Int, admin.id)
+      .query(`
                 UPDATE lab_admins
                 SET lastLoginAt = SYSUTCDATETIME()
                 WHERE id = @id
             `);
 
-        return res.status(200).json({
-            success: true,
-            message: 'Login successful',
-            token,
-            user: {
-                id: admin.id,
-                labId: admin.labId,
-                email: admin.email,
-                firstName: admin.firstName,
-                lastName: admin.lastName,
-                role: 'LabAdmin'
-            }
-        });
+    return res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      token,
+      user: {
+        id: admin.id,
+        labId: admin.labId,
+        lab: { labId: admin.labId, labName: admin.name },
+        email: admin.email,
+        firstName: admin.firstName,
+        lastName: admin.lastName,
+        role: 'LabAdmin'
+      }
+    });
 
-    } catch (err) {
+  } catch (err) {
 
-        console.error('Admin login error:', err);
+    console.error('Admin login error:', err);
 
-        return res.status(500).json({
-            error: 'An error occurred during login'
-        });
-    }
+    return res.status(500).json({
+      error: 'An error occurred during login'
+    });
+  }
 });
 
 module.exports = router;

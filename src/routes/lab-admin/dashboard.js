@@ -4,7 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { pool, sql } = require('../../db');
-const { verifyToken, verifyAdmin  } = require('../../middleware/auth');
+const { verifyToken, verifyAdmin } = require('../../middleware/auth');
 
 
 // dashboard statistics for admin, only admin can access this route
@@ -24,31 +24,25 @@ router.get('/stats', verifyAdmin, async (req, res) => {
                     -- Upcoming Bookings (Pending + Upcoming)
                     (
                         SELECT COUNT(*)
-                        FROM booking_services bs
-                        INNER JOIN bookings b
-                            ON bs.bookingId = b.id
-                        WHERE bs.labId = @labId
-                        AND b.currentStatusId IN (1, 2)
+                        FROM bookings b
+                        WHERE b.labId = @labId
+                        AND b.status IN ('upcoming')
                     ) AS totalUpcomingBookings,
 
                     -- Completed Bookings
                     (
                         SELECT COUNT(*)
-                        FROM booking_services bs
-                        INNER JOIN bookings b
-                            ON bs.bookingId = b.id
-                        WHERE bs.labId = @labId
-                        AND b.currentStatusId = 3
+                        FROM bookings b
+                        WHERE b.labId = @labId
+                        AND b.status = 'completed'
                     ) AS totalCompletedBookings,
 
                     -- Total Revenue (Completed Bookings Only)
                     (
-                        SELECT ISNULL(SUM(bs.total), 0)
-                        FROM booking_services bs
-                        INNER JOIN bookings b
-                            ON bs.bookingId = b.id
-                        WHERE bs.labId = @labId
-                        AND b.currentStatusId = 3
+                        SELECT ISNULL(SUM(b.totalPrice), 0)
+                        FROM bookings b
+                        WHERE b.labId = @labId
+                        AND b.status = 'completed'
                     ) AS totalRevenue,
 
                     -- Total Equipment
@@ -108,7 +102,7 @@ router.post('/services', verifyAdmin, async (req, res) => {
     if (!name || !category) {
         return res.status(400).json({ error: 'name and category are required' });
     }
-     // begin db transaction to ensure atomimicity
+    // begin db transaction to ensure atomimicity
     const transaction = new sql.Transaction(pool);
 
     try {
@@ -186,48 +180,27 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
 
         const result = await pool.request()
             .input('labId', sql.Int, labId)
-            .query(`
-                SELECT
-                    bs.id,
-                    bs.bookingId,
-                    bs.ref,
-                    bs.serviceId,
-                    bs.labId,
+            .query(`SELECT id, id as bookingId, userId, ref, labId, totalPrice as total, status, isWalkIn, date, time, homeAddress, postCode, addOns, createdAt from bookings WHERE labId = @labId`)
 
-                    b.userId,
-                    b.totalPrice,
+        if (result.recordset.length === 0) {
+            return [];
+        }
 
-                    bs.total,
-                    bs.serviceType,
-                    bs.isWalkIn,
-                    bs.date,
-                    bs.time,
-                    bs.homeAddress,
-                    bs.addOns,
+        const bookings = result.recordset;
 
-                    b.currentStatusId,
-                    s.name AS statusName,
+        for (const booking of bookings) {
+            const bookedServicesResult = await pool.request()
+                .input('bookingId', sql.Int, booking.bookingId)
+                .query(`SELECT DISTINCT bs.id, bs.bookingId, bs.price, bs.status, s.name, bs.labServiceId, s.category FROM booking_services bs inner join lab_services ls on bs.labServiceId = ls.serviceId inner join lk_services s ON s.id = ls.serviceId WHERE bookingId = @bookingId`)
 
-                    bs.createdAt,
-                    bs.updatedAt
+            const bookedServices = bookedServicesResult.recordset
+            booking.services = bookedServices ?? []
 
-                FROM booking_services bs
-
-                INNER JOIN bookings b
-                    ON bs.bookingId = b.id
-
-                LEFT JOIN booking_statuses s
-                    ON b.currentStatusId = s.id
-
-                WHERE bs.labId = @labId
-
-                ORDER BY bs.createdAt DESC
-            `);
-
+        }
         return res.status(200).json({
             success: true,
-            count: result.recordset.length,
-            data: result.recordset
+            count: bookings.length,
+            data: bookings
         });
 
     } catch (err) {
