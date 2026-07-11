@@ -5,7 +5,7 @@ const { verifyAdmin  } = require('../middleware/auth');
 
 
 // get equipment
-router.get('/', verifyAdmin, async (req, res) => {
+router.get('/:id', verifyAdmin, async (req, res) => {
     const labId = req.admin.labId;
 
     try {
@@ -32,7 +32,8 @@ router.get('/', verifyAdmin, async (req, res) => {
             id: e.id,
             equipment: e.equipment,
             category: e.category,
-            modelSerial: `${e.model || ''} / ${e.serialNumber || ''}`,
+            model: e.model,
+            serialNumber: e.serialNumber,
             calibrated: e.lastCalibrated,
             nextService: e.nextServiceDue,
             notes: e.notes,
@@ -108,13 +109,13 @@ router.post('/add-equipment', verifyAdmin, async (req, res) => {
         const equipmentResult = await new sql.Request(transaction)
             .input('labId', sql.Int, labId)
             .input('equipmentName', sql.NVarChar(255), equipmentName)
-            .input('model', sql.NVarChar(255), model || null)
+            .input('model', sql.NVarChar(255), model)
             .input('equipmentType', sql.NVarChar(255), category)
-            .input('serialNumber', sql.NVarChar(255), serialNumber || null)
-            .input('lastCalibrated', sql.Date, lastCalibrated || null)
-            .input('nextServiceDue', sql.Date, nextServiceDue || null)
-            .input('currentStatusId', sql.TinyInt, statusId || 1)
-            .input('notes', sql.NVarChar(sql.MAX), notes || null)
+            .input('serialNumber', sql.NVarChar(255), serialNumber)
+            .input('lastCalibrated', sql.Date, lastCalibrated)
+            .input('nextServiceDue', sql.Date, nextServiceDue)
+            .input('currentStatusId', sql.TinyInt, statusId)
+            .input('notes', sql.NVarChar(sql.MAX), notes)
             .query(`
                 INSERT INTO equipment
                 (
@@ -154,7 +155,7 @@ router.post('/add-equipment', verifyAdmin, async (req, res) => {
         // Create status history record
         await new sql.Request(transaction)
             .input('equipmentId', sql.Int, equipment.id)
-            .input('newStatusId', sql.TinyInt, statusId || 1)
+            .input('newStatusId', sql.TinyInt, statusId )
             .input('reason', sql.NVarChar(500), 'Equipment created')
             .input('changedBy', sql.Int, adminId)
             .query(`

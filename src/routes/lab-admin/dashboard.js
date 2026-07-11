@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { pool, sql } = require('../../db');
 const { verifyToken, verifyAdmin } = require('../../middleware/auth');
+const { Float } = require('mssql');
 
 
 // dashboard statistics for admin, only admin can access this route
@@ -83,6 +84,44 @@ router.get('/stats', verifyAdmin, async (req, res) => {
     }
 });
 
+router.get('/service-categories', verifyAdmin, async (req, res) => {
+    try {
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+        const serviceRequest = new sql.Request(transaction);
+        const serviceResult = await serviceRequest
+            .query(`
+                SELECT DISTINCT id, name, category, description FROM lk_services WHERE isActive = 1
+            `);
+
+        const services = serviceResult.recordset
+        return res.status(200).json(services)
+
+    } catch (error) {
+        res.status(500).json({ message: 'error fetching services' })
+    }
+})
+
+
+router.get('/services/:labId', verifyAdmin, async (req, res) => {
+    const labId = req.params.labId
+    try {
+        const adminLabServices = await pool.request()
+            .input('labId', sql.Int, labId)
+            .query(`SELECT s.id, s.name, ls.price, ls.duration, s.category, s.description, ls.preparation, ls.isActive
+                        FROM lk_Services s
+                        INNER JOIN lab_services ls ON s.id = ls.serviceId
+                        WHERE ls.labId = @labId
+                        ORDER BY s.createdAt DESC`);
+        const labServices = adminLabServices.recordset
+        return res.status(200).json(labServices)
+
+    } catch (error) {
+        res.status(500).json({ message: 'error fetching services' })
+    }
+})
+
+
 
 // Add a new service, only admin can create a new service belonging to their lab 
 router.post('/services', verifyAdmin, async (req, res) => {
@@ -91,6 +130,7 @@ router.post('/services', verifyAdmin, async (req, res) => {
     const adminId = req.admin.adminId;
 
     const {
+        serviceId,
         name,
         category,
         description,
@@ -99,42 +139,27 @@ router.post('/services', verifyAdmin, async (req, res) => {
         preparation
     } = req.body;
 
-    if (!name || !category) {
+    if (!name || !category || price <= 0) {
         return res.status(400).json({ error: 'name and category are required' });
     }
-    // begin db transaction to ensure atomimicity
-    const transaction = new sql.Transaction(pool);
 
     try {
-        await transaction.begin();
-
-        // -----------------------------
-        // 1. CREATE GLOBAL SERVICE
-        // -----------------------------
-        const serviceRequest = new sql.Request(transaction);
-
-        const serviceResult = await serviceRequest
-            .input('name', sql.NVarChar(255), name)
-            .input('category', sql.NVarChar(255), category)
-            .input('description', sql.NVarChar(sql.MAX), description || null)
-            .input('createdBy', sql.NVarChar(255), adminId.toString())
-            .query(`
-                INSERT INTO lk_services
-                (name, category, description, isActive, createdBy)
-                OUTPUT INSERTED.id, INSERTED.name
-                VALUES (@name, @category, @description, 1, @createdBy)
-            `);
-
-        const service = serviceResult.recordset[0];
-
-        // -----------------------------
-        // 2. CREATE LAB SERVICE
-        // -----------------------------
-        const labServiceRequest = new sql.Request(transaction);
-
-        const labServiceResult = await labServiceRequest
+        const check = await pool.request()
+            .input('serviceId', sql.Int, serviceId)
             .input('labId', sql.Int, labId)
-            .input('serviceId', sql.Int, service.id)
+            .query('SELECT id FROM lab_services WHERE serviceId = @serviceId AND labId = @labId');
+
+        const checkResult = check.recordset
+        if (checkResult.length > 0) {
+            return res.json({
+                success: false,
+                message: 'exists'
+            })
+        }
+
+        const labServiceResult = await pool.request()
+            .input('labId', sql.Int, labId)
+            .input('serviceId', sql.Int, serviceId)
             .input('price', sql.Decimal(12, 6), price)
             .input('duration', sql.Int, duration || null)
             .input('preparation', sql.VarChar(500), preparation || null)
@@ -148,24 +173,61 @@ router.post('/services', verifyAdmin, async (req, res) => {
                 (@labId, @serviceId, @price, @duration, @preparation, @isActive, @createdBy)
             `);
 
-        await transaction.commit(); // commit everything together 
+
 
         return res.status(201).json({
             success: true,
             data: {
-                service: service,
                 labService: labServiceResult.recordset[0]
             }
         });
 
     } catch (err) {
 
-        await transaction.rollback();
-
         console.error('Error creating service:', err);
 
         return res.status(500).json({
             error: 'Failed to create service'
+        });
+    }
+});
+
+router.patch('/services/update', verifyAdmin, async (req, res) => {
+
+    const labId = req.admin.labId;
+    const adminId = req.admin.adminId;
+    const {
+        serviceId,
+        price,
+        type
+    } = req.body;
+
+    try {
+        if (type === 'statusChange') {
+            const isActive = req.body.isActive
+            const update = await pool.request()
+                .input('serviceId', sql.Int, serviceId)
+                .input('labId', sql.Int, labId)
+                .input('isActive', sql.Bit, isActive)
+                .query('UPDATE lab_services SET isActive = @isActive WHERE serviceId = @serviceId AND labId = @labId');
+        } else {
+            const update = await pool.request()
+                .input('serviceId', sql.Int, serviceId)
+                .input('labId', sql.Int, labId)
+                .input('price', sql.Decimal(12, 6), price)
+                .query('UPDATE lab_services SET price = @price WHERE serviceId = @serviceId AND labId = @labId');
+        }
+
+        return res.json({
+            success: true,
+            message: 'price updated'
+        })
+    } catch (err) {
+
+        console.error('Error updating service:', err);
+
+        return res.status(500).json({
+            error: 'Failed to update service'
         });
     }
 });
@@ -267,18 +329,43 @@ router.patch('/bookings/:id/status', verifyAdmin, async (req, res) => {
 
     const labId = req.admin.labId;
     const bookingId = parseInt(req.params.id, 10);
-    const { statusId } = req.body;
+    const { ref, userId } = req.body.booking;
+    const { status } = req.body
 
     // -----------------------------
     // VALIDATION
     // -----------------------------
-    if (!statusId || ![1, 2, 3, 4].includes(Number(statusId))) {
+    if (!status) {
         return res.status(400).json({
-            error: 'statusId is required and must be 1 (Pending), 2 (Upcoming), 3 (Completed), or 4 (Cancelled)'
+            error: 'status is required and must be Pending, Upcoming, Completed, or Cancelled'
         });
     }
 
     try {
+        if (status === 'cancelled') {
+            const result = await pool.request()
+                .input('bookingId', sql.Int, bookingId)
+                .input('userId', sql.Int, userId)
+                .input('labId', sql.Int, labId)
+                .execute('usp_cancel_booking');
+
+            const row = result.recordset[0];
+
+            switch (row.resultCode) {
+                case 0:
+                    return res.status(200).json({
+                        bookingId,
+                        message: row.reason,
+                        labId
+                    });
+
+                case 1:
+                    return res.status(404).json({ message: row.reason, labId });
+
+                default:
+                    return res.status(500).json({ message: 'Unexpected error cancelling booking.' });
+            }
+        }
 
         // Verify booking exists and belongs to the admin's lab
         const bookingCheck = await pool.request()
@@ -286,8 +373,8 @@ router.patch('/bookings/:id/status', verifyAdmin, async (req, res) => {
             .input('labId', sql.Int, labId)
             .query(`
                 SELECT bs.id
-                FROM booking_services bs
-                WHERE bs.bookingId = @bookingId
+                FROM bookings bs
+                WHERE bs.id = @bookingId
                 AND bs.labId = @labId
             `);
 
@@ -300,32 +387,17 @@ router.patch('/bookings/:id/status', verifyAdmin, async (req, res) => {
         // Update the booking status and updatedAt timestamp
         await pool.request()
             .input('bookingId', sql.Int, bookingId)
-            .input('currentStatusId', sql.Int, Number(statusId))
+            .input('status', sql.VarChar(50), status)
+            .input('ref', sql.VarChar(50), status)
             .query(`
-                UPDATE bookings
-                SET currentStatusId = @currentStatusId,
-                    updatedAt = GETDATE()
-                WHERE id = @bookingId
-            `);
-
-        // Fetch the updated booking to return the new status name
-        const updatedBooking = await pool.request()
-            .input('bookingId', sql.Int, bookingId)
-            .query(`
-                SELECT
-                    b.id,
-                    b.currentStatusId,
-                    s.name AS statusName
-                FROM bookings b
-                LEFT JOIN booking_statuses s
-                    ON b.currentStatusId = s.id
-                WHERE b.id = @bookingId
-            `);
+                UPDATE bookings SET status = @status, updatedAt = GETDATE() WHERE id = @bookingId; 
+                UPDATE booking_services SET status = @status, updatedAt = GETDATE() WHERE bookingId = @bookingId`
+            );
 
         return res.status(200).json({
             success: true,
             message: 'Booking status updated successfully',
-            data: updatedBooking.recordset[0]
+            data: status
         });
 
     } catch (err) {

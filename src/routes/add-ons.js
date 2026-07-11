@@ -7,7 +7,7 @@ router.get('/', async (req, res) => {
   try {
     const request = pool.request();
     const result = await request.query(`
-      SELECT CAST(id AS VARCHAR(20)) AS id, name, price, requiresScheduling, description 
+      SELECT CAST(id AS VARCHAR(20)) AS id, CAST(id AS VARCHAR(20)) AS idx, name, price, requiresScheduling, description 
       FROM lk_add_ons WHERE isActive = 1
       ORDER BY price ASC
     `);
@@ -26,7 +26,7 @@ router.get('/:id', async (req, res) => {
     request.input('id', sql.VarChar(50), req.params.id);
 
     const result = await request.query(`
-      SELECT id, name, price, requiresScheduling, description 
+      SELECT id, idx, name, price, requiresScheduling, description 
       FROM lk_add_ons 
       WHERE id = @id
     `);

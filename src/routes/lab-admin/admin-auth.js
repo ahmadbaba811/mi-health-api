@@ -195,6 +195,21 @@ router.post('/login', async (req, res) => {
                 WHERE id = @id
             `);
 
+    // const adminLab = await pool.request()
+    //   .input('labId', sql.Int, admin.labId)
+    //   .query(`SELECT * FROM labs WHERE id = @labId`);
+    // const lab = adminLab.recordset
+
+    const adminLabServices = await pool.request()
+      .input('labId', sql.Int, admin.labId)
+      .query(`SELECT s.id, s.name, ls.price, ls.duration, s.category, s.description, ls.preparation
+                        FROM lk_Services s
+                        INNER JOIN lab_services ls ON s.id = ls.serviceId
+                        WHERE ls.labId = @labId
+                        ORDER BY s.createdAt DESC`);
+    const labServices = adminLabServices.recordset
+
+
     return res.status(200).json({
       success: true,
       message: 'Login successful',
@@ -202,7 +217,7 @@ router.post('/login', async (req, res) => {
       user: {
         id: admin.id,
         labId: admin.labId,
-        lab: { labId: admin.labId, labName: admin.name },
+        lab: { labId: admin.labId, labName: admin.name, services: labServices },
         email: admin.email,
         firstName: admin.firstName,
         lastName: admin.lastName,
