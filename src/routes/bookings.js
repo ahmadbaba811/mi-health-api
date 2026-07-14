@@ -24,7 +24,7 @@ async function getFullBooking({ bookingId, userId }) {
 
     const bookingResult = await bookingRequest.query(`
        SELECT id, id as bookingId, userId, ref, labId, totalPrice as total, status, isWalkIn, date, time, homeAddress, postCode, addOns, createdAt from bookings
-       WHERE ${bookingId ? 'id = @id' : 'userId = @userId'}
+       WHERE ${bookingId ? 'id = @id' : 'userId = @userId'} ORDER BY createdAt DESC
     `);
 
     if (bookingResult.recordset.length === 0) {
@@ -98,7 +98,7 @@ async function getFullBooking({ bookingId, userId }) {
 }
 
 // GET all bookings
-router.get('/', async (req, res) => {
+router.get('/', verifyToken, async (req, res) => {
     try {
         const request = pool.request();
         const result = await request.query(`
@@ -118,7 +118,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET single booking by ID
-router.post('/id', async (req, res) => {
+router.post('/id', verifyToken, async (req, res) => {
     const bookingId = req.body.bookingId;
     const userId = req.body.userId;
     try {
@@ -136,7 +136,7 @@ router.post('/id', async (req, res) => {
 });
 
 // GET bookings by status
-router.get('/status/:status', async (req, res) => {
+router.get('/status/:status', verifyToken, async (req, res) => {
     try {
         const request = pool.request();
         request.input('status', sql.VarChar(50), req.params.status);
@@ -159,7 +159,7 @@ router.get('/status/:status', async (req, res) => {
 });
 
 // POST hold booking for 10 minutes
-router.post('/hold', async (req, res) => {
+router.post('/hold', verifyToken, async (req, res) => {
     const { userId, labId, slotDate, timeSlot } = req.body;
     if (!userId || !labId || !slotDate || !timeSlot) {
         console.log('here')
@@ -202,7 +202,7 @@ router.post('/hold', async (req, res) => {
 })
 
 // POST confirm booking i.e convert held booking to full booking after payment
-router.post('/confirm', async (req, res) => {
+router.post('/confirm', verifyToken, async (req, res) => {
     const bookings = req.body.data;
     const dt = req.body;
     const { subTotal, addOnsTotal } = req.body
@@ -354,7 +354,7 @@ router.post('/confirm', async (req, res) => {
 
 
 // POST update booking date and time
-router.put('/update-booking', async (req, res) => {
+router.put('/update-booking', verifyToken, async (req, res) => {
 
     const booking = req.body.data;
     const user = req.body.user;
@@ -410,7 +410,7 @@ router.put('/update-booking', async (req, res) => {
 });
 
 
-router.post('/cancel-booking', async (req, res) => {
+router.post('/cancel-booking', verifyToken, async (req, res) => {
     const booking = req.body.data;
     const user = req.body.user;
     const userId = user.user.id;

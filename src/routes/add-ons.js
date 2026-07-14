@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../db');
+const { verifyToken } = require('../middleware/auth');
 
 // GET all premium add-ons
-router.get('/', async (req, res) => {
+router.get('/', verifyToken, async (req, res) => {
   try {
     const request = pool.request();
     const result = await request.query(`
@@ -20,7 +21,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET single add-on by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', verifyToken, async (req, res) => {
   try {
     const request = pool.request();
     request.input('id', sql.VarChar(50), req.params.id);
@@ -43,7 +44,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST create new add-on
-router.post('/', async (req, res) => {
+router.post('/', verifyToken, async (req, res) => {
   const { id, name, price, requiresScheduling, description } = req.body;
 
   if (!id || !name || price === undefined || requiresScheduling === undefined) {
@@ -71,7 +72,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT update add-on
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyToken, async (req, res) => {
   const { name, price, requiresScheduling, description } = req.body;
 
   try {
@@ -96,7 +97,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE add-on
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const request = pool.request();
     request.input('id', sql.VarChar(50), req.params.id);

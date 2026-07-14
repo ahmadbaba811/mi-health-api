@@ -3,9 +3,10 @@ const router = express.Router();
 const { pool, sql } = require('../db');
 const { formatTime, findClosestSearch } = require('../middleware/helpers');
 const { Int } = require('mssql');
+const { verifyToken } = require('../middleware/auth');
 
 // GET all labs
-router.get('/categories', async (req, res) => {
+router.get('/categories', verifyToken, async (req, res) => {
     try {
         const request = pool.request();
         const result = await request.query(`SELECT DISTINCT category from lk_services order by category ASC`);
@@ -17,7 +18,7 @@ router.get('/categories', async (req, res) => {
 })
 
 
-router.post('/', async (req, res) => {
+router.post('/list', verifyToken, async (req, res) => {
 
     const { page, recordSize } = req.body;
     try {
@@ -71,7 +72,7 @@ router.post('/', async (req, res) => {
 });
 
 
-router.get('/count', async (req, res) => {
+router.get('/count', verifyToken, async (req, res) => {
     try {
         const request = pool.request();
         let select = `SELECT COUNT(distinct a.id) FROM Labs a INNER JOIN lab_services b ON a.id = b.LabId INNER JOIN lk_services c ON  c.id = b.serviceId WHERE 1=1 `
@@ -84,7 +85,7 @@ router.get('/count', async (req, res) => {
     }
 })
 
-router.post('/search', async (req, res) => {
+router.post('/search', verifyToken, async (req, res) => {
     const { searchString, userLocation, useLocation, userDistance, page, recordSize, countRecords } = req.body;
     const request = pool.request();
 
@@ -221,7 +222,7 @@ router.post('/search', async (req, res) => {
 });
 
 // GET single lab by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', verifyToken, async (req, res) => {
     try {
         const request = pool.request();
         request.input('id', sql.VarChar(50), req.params.id);
@@ -262,7 +263,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // GET labs by area
-router.get('/area/:area', async (req, res) => {
+router.get('/area/:area', verifyToken, async (req, res) => {
     try {
         const request = pool.request();
         request.input('area', sql.VarChar(100), req.params.area);
@@ -288,7 +289,7 @@ router.get('/area/:area', async (req, res) => {
 });
 
 // GET open labs
-router.get('/status/open', async (req, res) => {
+router.get('/status/open', verifyToken, async (req, res) => {
     try {
         const request = pool.request();
         const result = await request.query(`

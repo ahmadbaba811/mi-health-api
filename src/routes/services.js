@@ -4,7 +4,7 @@ const { pool, sql } = require('../db');
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 
 // GET all services
-router.get('/', async (req, res) => {
+router.get('/', verifyToken, async (req, res) => {
   try {
     const request = pool.request();
     const result = await request.query(`
@@ -21,7 +21,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET single service by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', verifyToken, async (req, res) => {
   try {
     const request = pool.request();
     request.input('id', sql.VarChar(50), req.params.id);
@@ -44,7 +44,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // GET services by category
-router.get('/category/:category', async (req, res) => {
+router.get('/category/:category', verifyToken, async (req, res) => {
   try {
     const request = pool.request();
     request.input('category', sql.VarChar(100), req.params.category);

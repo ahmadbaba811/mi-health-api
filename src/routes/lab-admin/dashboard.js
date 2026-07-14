@@ -84,7 +84,7 @@ router.get('/stats', verifyAdmin, async (req, res) => {
     }
 });
 
-router.get('/service-categories', verifyAdmin, async (req, res) => {
+router.get('/service-categories', async (req, res) => {
     try {
         const transaction = new sql.Transaction(pool);
         await transaction.begin();

@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../db');
 const { formatTime, formatDate } = require('../middleware/helpers');
+const { verifyToken } = require('../middleware/auth');
 
 
-router.post('/lab-dates', async (req, res) => {
+router.post('/lab-dates', verifyToken, async (req, res) => {
   let labIds = req.body.join(',')
   try {
     const request = pool.request();
@@ -24,7 +25,7 @@ router.post('/lab-dates', async (req, res) => {
 });
 
 
-router.post('/lab-times', async (req, res) => {
+router.post('/lab-times', verifyToken, async (req, res) => {
   let { labId, slotDate } = req.body
 
   try {
@@ -46,7 +47,7 @@ router.post('/lab-times', async (req, res) => {
 
 
 // GET all available time slots
-router.get('/', async (req, res) => {
+router.get('/', verifyToken, async (req, res) => {
   try {
     // Return predefined time slots
     const timeSlots = [
@@ -64,7 +65,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET available time slots for a lab on specific date
-router.get('/lab/:labId/date/:date', async (req, res) => {
+router.get('/lab/:labId/date/:date', verifyToken, async (req, res) => {
   try {
     const request = pool.request();
     request.input('labId', sql.VarChar(50), req.params.labId);
@@ -96,7 +97,7 @@ function getAllDefaultSlots() {
 }
 
 // POST create time slot availability (admin)
-router.post('/availability', async (req, res) => {
+router.post('/availability', verifyToken, async (req, res) => {
   const { labId, date, timeSlot, isAvailable } = req.body;
 
   if (!labId || !date || !timeSlot || isAvailable === undefined) {
@@ -123,7 +124,7 @@ router.post('/availability', async (req, res) => {
 });
 
 // PUT update time slot availability
-router.put('/availability/:id', async (req, res) => {
+router.put('/availability/:id', verifyToken, async (req, res) => {
   const { isAvailable } = req.body;
 
   try {
