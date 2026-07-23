@@ -33,7 +33,7 @@ router.post('/lab-times', verifyToken, async (req, res) => {
     request.input('labId', sql.Int, labId);
     request.input('slotDate', sql.DateTime2, slotDate);
 
-    const result = await request.query(`SELECT distinct labId, slotDate, timeSlot FROM time_slot_availability WHERE labId = @labId AND slotDate >= CAST(@slotDate AS DATE) AND isAvailable = 1`);
+    const result = await request.query(`SELECT distinct labId, slotDate, timeSlot FROM time_slot_availability WHERE labId = @labId AND slotDate >= CAST(@slotDate AS DATE) AND timeSlot >= CAST(GETDATE() AS TIME) AND isAvailable = 1 ORDER BY slotDate, timeSlot `);
     const _times = result.recordset
     res.json(_times.map(row => ({
       ...row,

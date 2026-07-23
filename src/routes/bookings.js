@@ -85,9 +85,11 @@ async function getFullBooking({ bookingId, userId }) {
         servicesRequest.input('bookingId', sql.Int, booking.bookingId);
 
         const servicesResult = await servicesRequest.query(`
-            SELECT b.id, ls.labId, b.labServiceId, s.name, b.price, ls.duration, s.category, s.description, ls.preparation FROM lk_services s 
-            INNER JOIN lab_services ls on s.id = ls.serviceId 
-            INNER JOIN booking_services b on b.labserviceId  = ls.id
+            SELECT b.id, ls.labId, b.labServiceId, s.name, b.price, ls.duration, s.category, s.description, ls.preparation
+            FROM booking_services b 
+            INNER JOIN bookings bk on b.bookingId = bk.id
+            INNER JOIN lab_services ls on b.labServiceId = ls.serviceId AND bk.labId = ls.labId
+            INNER JOIN lk_services s on s.id = ls.serviceId 
             WHERE b.bookingId = @bookingId
         `);
 
@@ -226,7 +228,7 @@ router.post('/confirm', verifyToken, async (req, res) => {
             const totalPrice = b.total
             const labServiceTotal = b.labServiceTotal
             const labAddOnDetails = b.labAddOnDetails
-            
+
             // Basic validation
             if (!labId || !totalPrice || !Array.isArray(services) || !services.length) {
                 // return res.status(400).json({ error: 'Missing required booking fields.' });
@@ -269,10 +271,12 @@ router.post('/confirm', verifyToken, async (req, res) => {
                 if (row.resultCode === RESULT.SUCCESS) {
                     lineItems.push({ bookingId: row.bookingId, amount: labServiceTotal, type: "lab_subtotal", description: `Booking fee for ${b.lab.name}`, addOnId: null })
 
-                    const add_ons_items = labAddOnDetails?.map(x => {
-                        return { bookingId: row.bookingId, amount: x.price, type: "lab_add_on", description: `Add On fee for ${b.lab.name}`, addOnId: x.id }
-                    })
-                    lineItems.push(...add_ons_items)
+                    if (labAddOnDetails.length > 0) {
+                        const add_ons_items = labAddOnDetails?.map(x => {
+                            return { bookingId: row.bookingId, amount: x.price, type: "lab_add_on", description: `Add On fee for ${b.lab.name}`, addOnId: x.id }
+                        })
+                        lineItems.push(...add_ons_items)
+                    }
 
                     results_array.push({
                         status: 201,
@@ -285,7 +289,7 @@ router.post('/confirm', verifyToken, async (req, res) => {
 
                 if (row.resultCode === RESULT.HOLD_EXPIRED_OR_INVALID) {
                     if (isWalkIn === false) {
-                        console.log(ref, '410', 'Your slot reservation has expired')
+                        // console.log(ref, '410', 'Your slot reservation has expired')
                         results_array.push({
                             status: 410,
                             error: 'Your slot reservation has expired or is invalid. Please select a new time slot.',
@@ -315,7 +319,7 @@ router.post('/confirm', verifyToken, async (req, res) => {
                 const booking_outcome = results_array[0]
 
                 // RECORD PAYMENTS BEFORE SENDING BACK RESPONSE
-                
+
                 if (booking_outcome?.status === 201) {
                     const result = await pool.request()
                         .input('ref', sql.NVarChar(50), ref ?? null)

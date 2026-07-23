@@ -108,7 +108,7 @@ async function isAccountLocked(email) {
 
 // POST /login - Secure login endpoint
 //router.post('/login', loginLimiter,
-router.post('/login',  async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body;
 
   // Input validation
@@ -317,6 +317,34 @@ router.post('/logout', (req, res) => {
   res.status(200).json({
     message: 'Logout successful. Please remove your token.'
   });
+});
+
+
+// GET page data counts
+router.get('/page-data', async (req, res) => {
+  try {
+    const request = pool.request();
+    const result = await request.query(`SELECT DISTINCT Count(id) as labsCount FROM labs`);
+    res.status(200).json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching data:', err);
+    res.status(500).json({ error: 'Failed to fetch data' });
+  }
+});
+
+
+// GET registered email
+router.get('/check-email/:email', async (req, res) => {
+  try {
+    const request = pool.request();
+    request.input('email', sql.VarChar(50), req.params.email);
+
+    const result = await request.query(`SELECT email from users WHERE email = @email`);
+    res.status(200).json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching data:', err);
+    res.status(500).json({ error: 'Failed to fetch data' });
+  }
 });
 
 module.exports = router;

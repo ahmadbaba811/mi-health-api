@@ -39,7 +39,7 @@ router.post('/list', verifyToken, async (req, res) => {
             openTime: formatTime(lab.openTime),
             closeTime: formatTime(lab.closeTime),
             id: lab.id.toString(),
-            certifications: lab.certifications ? [result.recordset[0].certifications.split(", ").join(" ")] : []
+            certifications: lab.certifications ? lab.certifications.split(", ") : []
         }));
 
 
@@ -190,7 +190,7 @@ router.post('/search', verifyToken, async (req, res) => {
             openTime: formatTime(lab.openTime),
             closeTime: formatTime(lab.closeTime),
             id: lab.id.toString(),
-            certifications: lab.certifications ? [result.recordset[0].certifications.split(", ").join(" ")] : []
+            certifications: lab.certifications ? lab.certifications.split(", ") : []
         }));
 
 
