@@ -17,6 +17,8 @@ const adminDashboardRouter = require('./src/routes/lab-admin/dashboard');
 const testResultRouter = require('./src/routes/lab-admin/test-result');
 
 const app = express();
+const { sendMail, isEmailConfigured } = require('./src/utils/email');
+
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
@@ -40,6 +42,7 @@ app.use('/time-slots', timeSlotsRouter);
 app.use('/bookings', bookingsRouter);
 app.use('/equipment', equipmentRouter);
 app.use('/test-result', testResultRouter);
+
 
 const port = parseInt(process.env.PORT, 10)|| 5000 ;
 

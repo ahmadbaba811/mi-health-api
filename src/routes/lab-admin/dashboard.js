@@ -242,7 +242,7 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
 
         const result = await pool.request()
             .input('labId', sql.Int, labId)
-            .query(`SELECT id, id as bookingId, userId, ref, labId, totalPrice as total, status, isWalkIn, date, time, homeAddress, postCode, addOns, createdAt from bookings WHERE labId = @labId`)
+            .query(`SELECT id, id as bookingId, userId, ref, labId, totalPrice as total, status, isWalkIn, date, time, homeAddress, postCode, addOns, createdAt from bookings WHERE labId = @labId ORDER BY createdAt DESC`)
 
         if (result.recordset.length === 0) {
             return [];

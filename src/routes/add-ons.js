@@ -4,7 +4,7 @@ const { pool, sql } = require('../db');
 const { verifyToken } = require('../middleware/auth');
 
 // GET all premium add-ons
-router.get('/', verifyToken, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const request = pool.request();
     const result = await request.query(`

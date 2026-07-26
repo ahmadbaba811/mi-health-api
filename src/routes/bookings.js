@@ -85,7 +85,7 @@ async function getFullBooking({ bookingId, userId }) {
         servicesRequest.input('bookingId', sql.Int, booking.bookingId);
 
         const servicesResult = await servicesRequest.query(`
-            SELECT b.id, ls.labId, b.labServiceId, s.name, b.price, ls.duration, s.category, s.description, ls.preparation
+            SELECT b.id, ls.labId, b.labServiceId, s.name, b.price, ls.duration, s.category, s.description, ls.preparation, b.status
             FROM booking_services b 
             INNER JOIN bookings bk on b.bookingId = bk.id
             INNER JOIN lab_services ls on b.labServiceId = ls.serviceId AND bk.labId = ls.labId
@@ -458,58 +458,6 @@ router.post('/cancel-booking', verifyToken, async (req, res) => {
     }
 });
 
-// POST create new booking
-/*router.post('/', async (req, res) => {
-    const { id, ref, labId, date, time, status, total, createdAt, addOns, isWalkIn, homeAddress, services } = req.body;
-
-    if (!id || !ref || !labId || !total) {
-        return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    try {
-        const request = pool.request();
-        request.input('id', sql.VarChar(50), id);
-        request.input('ref', sql.VarChar(50), ref);
-        request.input('labId', sql.VarChar(50), labId);
-        request.input('date', sql.VarChar(10), date || '');
-        request.input('time', sql.VarChar(10), time || '');
-        request.input('status', sql.VarChar(50), status || 'upcoming');
-        request.input('total', sql.Int, total);
-        request.input('createdAt', sql.VarChar(10), createdAt || new Date().toISOString().split('T')[0]);
-        request.input('addOns', sql.VarChar(sql.MAX), JSON.stringify(addOns || []));
-        request.input('isWalkIn', sql.Bit, isWalkIn || 0);
-        request.input('homeAddress', sql.VarChar(sql.MAX), homeAddress || '');
-
-        await request.query(`
-      INSERT INTO Bookings (id, ref, labId, date, time, status, total, createdAt, addOns, isWalkIn, homeAddress)
-      VALUES (@id, @ref, @labId, @date, @time, @status, @total, @createdAt, @addOns, @isWalkIn, @homeAddress)
-    `);
-
-        // Insert booking services
-        if (services && Array.isArray(services)) {
-            for (const serviceId of services) {
-                const serviceRequest = pool.request();
-                serviceRequest.input('bookingId', sql.VarChar(50), id);
-                serviceRequest.input('serviceId', sql.VarChar(50), serviceId);
-                await serviceRequest.query(`
-          INSERT INTO BookingServices (bookingId, serviceId)
-          VALUES (@bookingId, @serviceId)
-        `);
-            }
-        }
-
-        res.status(201).json({
-            id, ref, labId, date, time, status, total, createdAt, addOns, isWalkIn, homeAddress, services
-        });
-    } catch (err) {
-        console.error('Error creating booking:', err);
-        res.status(500).json({ error: 'Failed to create booking' });
-    }
-}); */
-
-
-
-
 
 // PUT update booking
 router.put('/:id', async (req, res) => {
@@ -581,11 +529,6 @@ router.delete('/:id', async (req, res) => {
         res.status(500).json({ error: 'Failed to delete booking' });
     }
 });
-
-
-
-
-
 
 
 //post create a new booking, only authenticated users can create a new booking
@@ -786,6 +729,58 @@ router.post('/addbooking', verifyToken, async (req, res) => {
 
         return res.status(500).json({
             error: 'Failed to create booking'
+        });
+    }
+});
+
+
+
+// // GET user test results
+router.get('/results/:userId', verifyToken, async (req, res) => {
+
+    const userId = req.params.userId;
+
+    try {
+
+        const result = await pool.request()
+            .input('userId', sql.Int, userId)
+            .query(`SELECT a.userId, a.ref, a.labId, a.status, a.isWalkin, a.addOns, b.bookingId, b.fileUrl, b.testComments, b.createdBy, b.createdAt FROM bookings a INNER JOIN test_results b ON a.id = b.bookingId WHERE userId = @userId ORDER BY b.createdAt DESC;`)
+
+        if (result.recordset.length === 0) {
+            return [];
+        }
+
+        const results = result.recordset;
+
+        for (const service of results) {
+            const bookedServicesResult = await pool.request()
+                .input('bookingId', sql.Int, service.bookingId)
+                .query(`SELECT b.id, ls.labId, b.labServiceId, s.name, b.price, ls.duration, s.category, s.description, ls.preparation, b.status
+                FROM booking_services b 
+                INNER JOIN bookings bk on b.bookingId = bk.id
+                INNER JOIN lab_services ls on b.labServiceId = ls.serviceId AND bk.labId = ls.labId
+                INNER JOIN lk_services s on s.id = ls.serviceId 
+                WHERE b.bookingId = @bookingId`);
+
+            const bookedServices = bookedServicesResult.recordset
+            service.services = bookedServices ?? []
+        }
+
+
+        return res.status(200).json({
+            success: true,
+            count: results.length,
+            data: results
+        });
+
+        console.log(results)
+
+    } catch (err) {
+
+        console.error('Error fetching results:', err);
+
+        return res.status(500).json({
+            error: 'Failed to fetch results'
         });
     }
 });

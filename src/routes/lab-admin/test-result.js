@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../../db');
-const { verifyAdmin } = require('../../middleware/auth');
+const { verifyAdmin, verifyToken } = require('../../middleware/auth');
 const upload = require('../../middleware/upload');
+const { MAX } = require('mssql');
 
 // Add a test result document for a specific booking 
 router.post('/', verifyAdmin, upload.single('document'), async (req, res) => {
@@ -111,21 +112,25 @@ router.post('/', verifyAdmin, upload.single('document'), async (req, res) => {
 });
 
 // get all test results 
-router.get('/', verifyAdmin, async (req, res) => {
+router.get('/:id', verifyAdmin, async (req, res) => {
     const labId = req.admin.labId;
+    const bookingId = req.params.id
 
     try {
         const result = await pool.request()
             .input('labId', sql.Int, labId)
+            .input('bookingId', sql.Int, bookingId)
             .query(`
                 SELECT 
                     id AS testResultId,
                     bookingId,
                     fileUrl,
                     fileType,
-                    createdAt
+                    createdAt,
+                    testComments,
+                    commentsBy
                 FROM test_results
-                WHERE labId = @labId
+                WHERE labId = @labId AND bookingId = @bookingId
                 ORDER BY createdAt DESC
             `);
 
@@ -140,5 +145,41 @@ router.get('/', verifyAdmin, async (req, res) => {
         return res.status(500).json({ error: 'Failed to fetch test results' });
     }
 });
+
+
+// Add result commentry
+router.patch('/update', verifyAdmin, async (req, res) => {
+    const labId = req.admin.labId;
+    const adminId = req.admin.adminId;
+
+    const { bookingId, comment } = req.body;
+    try {
+
+        if (!comment) {
+            return res.status(409).json({ error: 'Comment cannot be empty' });
+        }
+
+        const testResultComment = await pool.request()
+            .input('bookingId', sql.Int, bookingId)
+            .input('commentsBy', sql.Int, adminId)
+            .input('testComments', sql.VarChar(MAX), comment)
+            .query(`UPDATE test_results SET testComments = @testComments, commentsBy = @commentsBy, commentsDate = GETDATE() WHERE bookingId = @bookingId `);
+
+        return res.status(201).json({
+            success: true,
+            message: 'Test result comment added successfully'
+        });
+
+    } catch (err) {
+        console.log(err)
+        console.error('Test result upload error:', err);
+        return res.status(500).json({ error: 'Failed to upload test result document' });
+    }
+});
+
+
+
+
+
 
 module.exports = router;
