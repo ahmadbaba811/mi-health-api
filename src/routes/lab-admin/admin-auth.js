@@ -118,7 +118,8 @@ router.post('/register', async (req, res) => {
 
 router.post('/login', async (req, res) => {
   const { labId, email, password } = req.body;
-
+  const isSuper = req.body.source === "super"
+  
   // Validation
   if (!email || !password) {
     return res.status(400).json({
@@ -136,9 +137,9 @@ router.post('/login', async (req, res) => {
     request.input('email', sql.VarChar(255), sanitizedEmail);
 
     const result = await request.query(`
-            SELECT a.id, labId, firstName, lastName, email, passwordHash, a.isActive, failedLoginCount, b.name
+            SELECT a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
             FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
-            WHERE a.email = @email
+            WHERE a.email = @email ${isSuper === true ? ` AND isSuper = 1` :``}
         `);
 
     // Admin not found

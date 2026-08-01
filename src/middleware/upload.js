@@ -17,7 +17,7 @@ const localStorage = multer.diskStorage({
     },
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, 'result-' + uniqueSuffix + path.extname(file.originalname));
+        cb(null, 'doc-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
 
@@ -49,7 +49,10 @@ const fileFilter = (req, file, cb) => {
     const allowedTypes = [
         'application/pdf',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/msword'
+        'application/msword',
+        "image/jpeg",
+        "image/png",
+        "image/jpg",
     ];
     if (allowedTypes.includes(file.mimetype)) {
         cb(null, true);

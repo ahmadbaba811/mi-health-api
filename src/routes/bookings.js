@@ -164,7 +164,6 @@ router.get('/status/:status', verifyToken, async (req, res) => {
 router.post('/hold', verifyToken, async (req, res) => {
     const { userId, labId, slotDate, timeSlot } = req.body;
     if (!userId || !labId || !slotDate || !timeSlot) {
-        console.log('here')
         return res.status(400).json({ error: 'labId, slotDate and timeSlot are required.' });
     }
 
@@ -340,7 +339,6 @@ router.post('/confirm', verifyToken, async (req, res) => {
                     const row = result.recordset[0];
 
                     if (row.resultCode !== 0) {
-                        console.log(row)
                         // SEND ADMIN AN EMAIL NOTIFICATION WITH THE FAILED PAYMENT RECORD DETAILS
                         const b = { lineItems: lineItems, vat: dt.vat, serviceFee: dt.serviceFee }
                     }
@@ -772,8 +770,6 @@ router.get('/results/:userId', verifyToken, async (req, res) => {
             count: results.length,
             data: results
         });
-
-        console.log(results)
 
     } catch (err) {
 

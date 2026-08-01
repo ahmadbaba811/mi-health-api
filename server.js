@@ -3,6 +3,7 @@ const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
 const { pool, poolConnect, sql } = require('./src/db');
+const configureSecurity  = require('./src/utils/headers')
 
 const usersRouter = require('./src/routes/users');
 const authRouter = require('./src/routes/auth');
@@ -15,13 +16,18 @@ const equipmentRouter = require('./src/routes/equipment');
 const adminAuthRouter = require('./src/routes/lab-admin/admin-auth');
 const adminDashboardRouter = require('./src/routes/lab-admin/dashboard');
 const testResultRouter = require('./src/routes/lab-admin/test-result');
+const superAdminRouter = require('./src/routes/super-admin/super-admin')
+
 
 const app = express();
 const { sendMail, isEmailConfigured } = require('./src/utils/email');
 
-app.use(helmet());
-app.use(cors());
-app.use(express.json());
+// app.use(helmet());
+// app.use(cors());
+// app.use(express.json());
+
+configureSecurity(app);
+
 
 app.get('/', (req, res) => {
   res.json({ status: 'ok', env: process.env.NODE_ENV });
@@ -35,6 +41,7 @@ app.use('/users', usersRouter);
 app.use('/auth', authRouter);
 app.use('/admin-auth', adminAuthRouter);
 app.use('/dashboard', adminDashboardRouter);
+app.use('/admin/admin', superAdminRouter);
 app.use('/add-ons', addOnsRouter);
 app.use('/services', servicesRouter);
 app.use('/labs', labsRouter);
