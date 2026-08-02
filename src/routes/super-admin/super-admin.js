@@ -173,7 +173,23 @@ router.delete('/users/:id', verifyAdmin, async (req, res) => {
   }
 });
 
-// ADD NEW LAB ADMINS
+// LAB ADMINS
+
+router.get('/lab-admins', verifyAdmin, async (_req, res) => {
+  try {
+    const request = pool.request();
+    const result = await request.query(`
+      SELECT id, labId, firstName, lastName, email, isActive, createdAt
+      FROM lab_admins where isActive = 1
+      ORDER BY createdAt DESC
+    `);
+    res.json(result.recordset);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
 router.post('/lab-admins', verifyAdmin, async (req, res) => {
 
   const { firstName, lastName, email, phone, password, onboardingId, role, isActive } = req.body;

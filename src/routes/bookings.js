@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../db');
 const { verifyToken } = require('../middleware/auth');
+const https = require('https')
+
 
 const HOLD_MINUTES = 10;
 
@@ -201,6 +203,102 @@ router.post('/hold', verifyToken, async (req, res) => {
         return res.status(500).json({ error: 'Failed to reserve slot. Please try again.' });
     }
 })
+
+// POST reslease hold
+router.post('/release-hold', verifyToken, async (req, res) => {
+    const { labId, holdId } = req.body;
+    if (!labId || !holdId) {
+        return res.status(400).json({ error: 'labId, slotDate and timeSlot are required.' });
+    }
+
+    try {
+        const result = await pool.request()
+            .input('holdId', sql.Int, holdId)
+            .input('labId', sql.Int, labId)
+            .execute('usp_release_slot_hold');
+
+        const row = result.recordset[0];
+
+        switch (row.resultCode) {
+            case 0:
+                return res.status(200).json({
+                    success: true,
+                    message: `Slot hold cancelled`,
+                });
+
+            case 1:
+                return res.status(409).json({ error: 'not active (already released)' });
+
+            case 2:
+                return res.status(404).json({ error: 'hold not found for this holdId' });
+
+            default:
+                return res.status(500).json({ error: 'Unexpected error reserving slot.' });
+        }
+    } catch (err) {
+        return res.status(500).json({ error: 'Failed to release slot. Please try again.' });
+    }
+})
+
+
+// Initialize payment
+router.post("/initialize", async (req, res) => {
+    try {
+        const params = JSON.stringify({
+            email: req.body.email,
+            amount: req.body.amount * 100, // ₦5,000.00 in kobo
+        });
+
+        const options = {
+            hostname: "api.paystack.co",
+            port: 443,
+            path: "/transaction/initialize",
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+                "Content-Type": "application/json",
+            },
+        };
+
+        const paystackReq = https.request(options, (paystackRes) => {
+            let data = "";
+
+            paystackRes.on("data", (chunk) => {
+                data += chunk;
+            });
+
+            paystackRes.on("end", () => {
+                try {
+                    const result = JSON.parse(data);
+                    return res.status(paystackRes.statusCode).json(result);
+                } catch (err) {
+                    return res.status(500).json({
+                        success: false,
+                        message: "Invalid response from Paystack",
+                    });
+                }
+            });
+        });
+
+        paystackReq.on("error", (error) => {
+            console.error(error);
+
+            return res.status(500).json({
+                success: false,
+                message: "Failed to initialize payment",
+            });
+        });
+
+        paystackReq.write(params);
+        paystackReq.end();
+    } catch (error) {
+        console.log(error)
+        return res.status(500).json({
+            success: false,
+            message: "Failed to initialize payment",
+        });
+    }
+});
 
 // POST confirm booking i.e convert held booking to full booking after payment
 router.post('/confirm', verifyToken, async (req, res) => {

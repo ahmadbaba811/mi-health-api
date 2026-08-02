@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { pool, sql } = require('../db');
 const { verifyToken } = require('../middleware/auth');
+const { contentSecurityPolicy } = require('helmet');
 
 
 // Rate limiting: 5 failed login attempts per 15 minutes per IP
@@ -138,7 +139,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     request.input('email', sql.VarChar(255), sanitizedEmail);
 
     const result = await request.query(`
-      SELECT id, email, passwordHash, isActive, firstName, lastName FROM Users 
+      SELECT id, email, passwordHash, isActive, firstName, lastName, emailVerified FROM Users 
       WHERE email = @email
     `);
 
@@ -158,6 +159,15 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(403).json({
         error: 'inactive',
         message: 'Account is inactive. Please contact support.'
+      });
+    }
+
+    // Check if email is verified
+    if (user.emailVerified === null) {
+      await logFailedLogin(sanitizedEmail, 'Email not verified');
+      return res.status(403).json({
+        error: 'inactive',
+        message: 'Account not verified. Please contact support.'
       });
     }
 
@@ -309,16 +319,6 @@ router.post('/register', async (req, res) => {
 });
 
 
-// POST /logout - Optional logout endpoint (invalidate token on client side)
-router.post('/logout', (req, res) => {
-  // JWT tokens are stateless, so logout is handled on client by removing token
-  // Optionally maintain a token blacklist in database
-
-  res.status(200).json({
-    message: 'Logout successful. Please remove your token.'
-  });
-});
-
 
 // GET page data counts
 router.get('/page-data', async (req, res) => {
@@ -339,8 +339,27 @@ router.get('/check-email/:email', async (req, res) => {
     const request = pool.request();
     request.input('email', sql.VarChar(50), req.params.email);
 
-    const result = await request.query(`SELECT email from users WHERE email = @email`);
+    const result = await request.query(`SELECT email, firstName from users WHERE email = @email`);
     res.status(200).json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching data:', err);
+    res.status(500).json({ error: 'Failed to fetch data' });
+  }
+});
+
+// POST change password
+router.post('/reset-password', async (req, res) => {
+  try {
+    const passwordHash = await bcrypt.hash(req.body.newPassword, 10);
+
+    const request = pool.request();
+    request.input('email', sql.VarChar(50), req.body.email);
+    request.input('passwordHash', sql.NVarChar(500), passwordHash)
+
+    await request.query(`UPDATE users SET passwordHash = @passwordHash WHERE email = @email`);
+    const result = await request.query(`SELECT firstName, lastName FROM users WHERE email = @email`);
+
+    res.status(200).json({ success: true, data: result.recordset[0] });
   } catch (err) {
     console.error('Error fetching data:', err);
     res.status(500).json({ error: 'Failed to fetch data' });

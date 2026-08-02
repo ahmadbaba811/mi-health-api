@@ -35,7 +35,7 @@ function buildEmailHtml({html, now}) {
                     This email was sent by MiHealth. If you have any questions, contact our support team.
                     <div> Email: support@mihealth.ng ${"      "} Website: https://mihealth.ng
                     </div>
-                    <p>© ${{now}} MiHealth.</p>
+                    <p>© ${now} MiHealth.</p>
                     <p>Connecting care, anytime.</p>
                   </td>
                 </tr>

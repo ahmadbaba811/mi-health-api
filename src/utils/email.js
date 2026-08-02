@@ -19,7 +19,6 @@ function createTransport() {
     return nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: process.env.SMTP_PORT,
-        secure: false,
         auth: {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS
@@ -27,25 +26,28 @@ function createTransport() {
     })
 }
 
-async function sendEmail({ to, subject, html }) {
+async function sendEmail({ to, subject, html, bcc }) {
     if (!to || !subject) {
         throw new Error('Missing required email fields: to, subject are required.');
     }
 
     const transporter = createTransport();
 
-    const info = await transporter.sendMail({
+    const mailOptions = {
         from: process.env.EMAIL_FROM,
         to,
         subject,
-        html
-    });
+        html,
+        bcc
+    }
 
-    return info;
+    await transporter.sendMail(mailOptions, (err, info) => {
+        if (error) {
+            return console.log(error);
+        }
+        console.log('Successfully sent');
+        return info;
+    });
 }
 
-module.exports = {
-    createTransport,
-    sendEmail,
-    isEmailConfigured,
-};
+module.exports = { sendEmail };

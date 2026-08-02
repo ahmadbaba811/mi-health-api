@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../db');
 const { sendEmail } = require('../utils/email');
-const { buildEmailHtml } = require('../templates/welcome-email');
+const { buildEmailHtml } = require('../templates/email-template');
 
 // GET /users - list users (example)
 router.get('/', async (req, res) => {
@@ -32,26 +32,26 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST /users/test-email - sends a branded welcome email
-router.post('/test-email', async (req, res) => {
+router.post('/send-email', async (req, res) => {
   try {
-    const {to, subject} = req.body;
+    const { to, subject } = req.body;
     if (!to) {
       return res.status(400).json({ error: 'Recipient email is required' });
     }
 
     const now = new Date().getFullYear();
-    const html = buildEmailHtml({html: req.body.html, now: now});
+    const html = buildEmailHtml({ html: req.body.html, now: now });
+    const bcc = !req.body.bcc ? null : req.body.bcc;
     const info = await sendEmail({
       to: to,
+      bcc: bcc,
       subject: subject,
       html: html
     });
 
     res.status(200).json({
       success: true,
-      message: 'Welcome email sent successfully',
-      messageId: info.messageId,
+      message: 'Welcome email sent successfully'
     });
   } catch (error) {
     console.error('Failed to send welcome email:', error);
@@ -59,6 +59,29 @@ router.post('/test-email', async (req, res) => {
       success: false,
       message: error.message || 'Failed to send email',
     });
+  }
+});
+
+
+router.post('/verify-email', async (req, res) => {
+  const email = req.body.email;
+  try {
+    const request = pool.request();
+    request.input('email', sql.VarChar(255), email);
+    const result = await request.query('SELECT * FROM [Users] WHERE email = @email ');
+    const user = result.recordset[0]
+    if (user && user.emailVerified === null) {
+      await request.query(`UPDATE users SET emailVerified = 'verified' WHERE email=@email`)
+      res.status(200).json({ verified: true })
+    }
+
+    if (user && user.emailVerified === 'verified') {
+      res.status(200).json({ exists: true })
+    }
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch user' });
   }
 });
 

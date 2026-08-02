@@ -258,6 +258,10 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
             const bookedServices = bookedServicesResult.recordset
             booking.services = bookedServices ?? []
 
+            const userResult = await pool.request()
+                .input('userId', sql.Int, booking.userId)
+                .query(`SELECT id, email, firstName, lastName FROM users WHERE id = @userId`);
+            booking.user = userResult.recordset
         }
         return res.status(200).json({
             success: true,
