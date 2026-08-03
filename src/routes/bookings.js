@@ -241,76 +241,19 @@ router.post('/release-hold', verifyToken, async (req, res) => {
 })
 
 
-// Initialize payment
-router.post("/initialize", async (req, res) => {
-    try {
-        const params = JSON.stringify({
-            email: req.body.email,
-            amount: req.body.amount * 100, // ₦5,000.00 in kobo
-        });
-
-        const options = {
-            hostname: "api.paystack.co",
-            port: 443,
-            path: "/transaction/initialize",
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-                "Content-Type": "application/json",
-            },
-        };
-
-        const paystackReq = https.request(options, (paystackRes) => {
-            let data = "";
-
-            paystackRes.on("data", (chunk) => {
-                data += chunk;
-            });
-
-            paystackRes.on("end", () => {
-                try {
-                    const result = JSON.parse(data);
-                    return res.status(paystackRes.statusCode).json(result);
-                } catch (err) {
-                    return res.status(500).json({
-                        success: false,
-                        message: "Invalid response from Paystack",
-                    });
-                }
-            });
-        });
-
-        paystackReq.on("error", (error) => {
-            console.error(error);
-
-            return res.status(500).json({
-                success: false,
-                message: "Failed to initialize payment",
-            });
-        });
-
-        paystackReq.write(params);
-        paystackReq.end();
-    } catch (error) {
-        console.log(error)
-        return res.status(500).json({
-            success: false,
-            message: "Failed to initialize payment",
-        });
-    }
-});
-
 // POST confirm booking i.e convert held booking to full booking after payment
 router.post('/confirm', verifyToken, async (req, res) => {
     const bookings = req.body.data;
     const dt = req.body;
-    const { subTotal, addOnsTotal } = req.body
+   
+    const { subTotal, addOnsTotal, bookingFor, customerDetails } = req.body
     const labOnlySubTotal = subTotal
 
     const user = req.body.user
     const results_array = []
 
     let lineItems = [];
+    let bk_Id = 0
     if (bookings.length > 0) {
         await Promise.all(bookings.map(async (b, index) => {
             const userId = user.user.id;
@@ -363,8 +306,7 @@ router.post('/confirm', verifyToken, async (req, res) => {
                     .execute('usp_confirm_booking');
 
                 const row = result.recordset[0];
-
-
+                
                 if (row.resultCode === RESULT.SUCCESS) {
                     lineItems.push({ bookingId: row.bookingId, amount: labServiceTotal, type: "lab_subtotal", description: `Booking fee for ${b.lab.name}`, addOnId: null })
 
@@ -418,7 +360,7 @@ router.post('/confirm', verifyToken, async (req, res) => {
                 // RECORD PAYMENTS BEFORE SENDING BACK RESPONSE
 
                 if (booking_outcome?.status === 201) {
-                    const result = await pool.request()
+                    const pay_result = await pool.request()
                         .input('ref', sql.NVarChar(50), ref ?? null)
                         .input('userId', sql.Int, userId)
                         .input('labId', sql.Int, labId)
@@ -434,13 +376,25 @@ router.post('/confirm', verifyToken, async (req, res) => {
                         .input('lineItems', sql.NVarChar(sql.MAX), JSON.stringify(lineItems))
                         .execute('usp_record_payment');
 
-                    const row = result.recordset[0];
+                    const row = pay_result.recordset[0];
 
                     if (row.resultCode !== 0) {
                         // SEND ADMIN AN EMAIL NOTIFICATION WITH THE FAILED PAYMENT RECORD DETAILS
                         const b = { lineItems: lineItems, vat: dt.vat, serviceFee: dt.serviceFee }
                     }
+
+                    if (bookingFor === "someone") {
+                        const customer_result = await pool.request()
+                            .input('ref', sql.NVarChar(50), ref ?? null)
+                            .input('fullName', sql.NVarChar(50), customerDetails.fullName)
+                            .input('email', sql.NVarChar(50), customerDetails.email)
+                            .input('phone', sql.NVarChar(50), customerDetails.phone)
+                            .input('birthYear', sql.NVarChar(50), customerDetails.yearOfBirth)
+                            .input('bookedBy', sql.NVarChar(255), String(userId))
+                            .query('INSERT INTO booking_users (ref, fullName, email, phone, birthYear, bookedBy, bookedAt) VALUES (@ref, @fullName, @email, @phone, @birthYear, @bookedBy, GETDATE())');
+                    }
                 }
+
                 res.json(results_array)
             }
         }))

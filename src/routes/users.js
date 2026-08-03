@@ -22,12 +22,87 @@ router.get('/:id', async (req, res) => {
   try {
     const request = pool.request();
     request.input('id', sql.Int, id);
-    const result = await request.query('SELECT * FROM [Users] WHERE Id = @id');
+    const result = await request.query('SELECT id, firstName, lastName, orgName, email, phone, altPhone, address, birthYear, photoUrl FROM users WHERE id = @id');
     const user = result.recordset[0];
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json(user);
   } catch (err) {
     console.error('Error fetching user:', err);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// PUT /users/:id - update user
+router.put('/:id', async (req, res) => {
+  const id = req.params.id;
+  const {
+    accountType,
+    firstName,
+    lastName,
+    orgName,
+    phone,
+    additionalPhone,
+    address,
+    yearOfBirth,
+  } = req.body;
+
+  try {
+    const request = pool.request();
+    request.input('id', sql.Int, id);
+    request.input('accountType', sql.VarChar(50), accountType);
+    request.input('firstName', sql.VarChar(255), firstName);
+    request.input('lastName', sql.VarChar(255), lastName);
+    request.input('orgName', sql.VarChar(255), orgName);
+    request.input('phone', sql.VarChar(50), phone);
+    request.input('additionalPhone', sql.VarChar(50), additionalPhone);
+    request.input('address', sql.VarChar(500), address);
+    request.input('yearOfBirth', sql.Int, yearOfBirth);
+
+    const result = await request.query(`
+      UPDATE users
+      SET
+        firstName = @firstName,
+        lastName = @lastName,
+        orgName = @orgName,
+        phone = @phone,
+        altPhone = @additionalPhone,
+        address = @address,
+        birthYear = @yearOfBirth
+      WHERE id = @id;
+
+      SELECT id, accountType, firstName, lastName, orgName, email, phone, altPhone, address, birthYear, photoUrl
+      FROM users
+      WHERE id = @id;
+    `);
+
+    const user = result.recordset[0];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(user);
+  } catch (err) {
+    console.error('Error updating user:', err);
+    res.status(500).json({ error: 'Failed to update user' });
+  }
+});
+
+
+router.post('/verify-email', async (req, res) => {
+  const email = req.body.email;
+  try {
+    const request = pool.request();
+    request.input('email', sql.VarChar(255), email);
+    const result = await request.query('SELECT * FROM [Users] WHERE email = @email ');
+    const user = result.recordset[0]
+    if (user && user.emailVerified === null) {
+      await request.query(`UPDATE users SET emailVerified = 'verified' WHERE email=@email`)
+      res.status(200).json({ verified: true })
+    }
+
+    if (user && user.emailVerified === 'verified') {
+      res.status(200).json({ exists: true })
+    }
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
+  } catch (err) {
     res.status(500).json({ error: 'Failed to fetch user' });
   }
 });
@@ -63,26 +138,5 @@ router.post('/send-email', async (req, res) => {
 });
 
 
-router.post('/verify-email', async (req, res) => {
-  const email = req.body.email;
-  try {
-    const request = pool.request();
-    request.input('email', sql.VarChar(255), email);
-    const result = await request.query('SELECT * FROM [Users] WHERE email = @email ');
-    const user = result.recordset[0]
-    if (user && user.emailVerified === null) {
-      await request.query(`UPDATE users SET emailVerified = 'verified' WHERE email=@email`)
-      res.status(200).json({ verified: true })
-    }
-
-    if (user && user.emailVerified === 'verified') {
-      res.status(200).json({ exists: true })
-    }
-
-    if (!user) return res.status(404).json({ error: 'User not found' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch user' });
-  }
-});
 
 module.exports = router;

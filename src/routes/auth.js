@@ -257,8 +257,7 @@ async function isEmailRegistered(email) {
 
 // POST /register - Account creation endpoint
 router.post('/register', async (req, res) => {
-
-  const { email, password, confirmPassword, firstName, lastName, phone, address } = req.body;
+  const { email, password, confirmPassword, firstName, lastName, phone, address, orgName, accountType } = req.body;
 
   const validationErrors = validateRegisterInput(email, password, confirmPassword);
   if (validationErrors.length > 0) {
@@ -286,11 +285,14 @@ router.post('/register', async (req, res) => {
     request.input('lastName', sql.VarChar(255), lastName);
     request.input('phone', sql.VarChar(255), phone);
     request.input('address', sql.VarChar(255), address);
+    request.input('orgName', sql.VarChar(255), orgName);
+    request.input('accountType', sql.VarChar(255), accountType);
 
     await request.query(`
-      INSERT INTO Users (email, firstName, lastName, phone, address, passwordHash, isActive, createdAt)
-      VALUES (@email, @firstName, @lastName, @phone, @address, @passwordHash, @isActive, SYSUTCDATETIME())
-    `);
+      INSERT INTO Users(email, firstName, lastName, phone, passwordHash, isActive, createdAt, accountType ${accountType === "organisation" ? `, address, orgName` : ''})
+      VALUES
+      (@email, @firstName, @lastName, @phone, @passwordHash, @isActive, SYSUTCDATETIME(), @accountType ${accountType === "organisation" ? `, @address, @orgName` : ''})
+  `);
 
     const fetchRequest = pool.request();
     fetchRequest.input('email', sql.VarChar(255), sanitizedEmail);
@@ -298,7 +300,7 @@ router.post('/register', async (req, res) => {
       SELECT id, email
       FROM Users
       WHERE email = @email
-    `);
+  `);
 
     const newUser = fetchResult.recordset[0];
 

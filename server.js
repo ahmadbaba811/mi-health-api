@@ -17,6 +17,7 @@ const adminAuthRouter = require('./src/routes/lab-admin/admin-auth');
 const adminDashboardRouter = require('./src/routes/lab-admin/dashboard');
 const testResultRouter = require('./src/routes/lab-admin/test-result');
 const superAdminRouter = require('./src/routes/super-admin/super-admin')
+const paymentRouter = require('./src/routes/payment')
 
 
 const app = express();
@@ -49,6 +50,7 @@ app.use('/time-slots', timeSlotsRouter);
 app.use('/bookings', bookingsRouter);
 app.use('/equipment', equipmentRouter);
 app.use('/test-result', testResultRouter);
+app.use('/payment', paymentRouter);
 
 
 const port = parseInt(process.env.PORT, 10)|| 5000 ;
