@@ -124,7 +124,8 @@ router.get('/', verifyToken, async (req, res) => {
 // GET single booking by ID
 router.post('/id', verifyToken, async (req, res) => {
     const bookingId = req.body.bookingId;
-    const userId = req.body.userId;
+    const userId = req.user?.userId;
+
     try {
         const booking = await getFullBooking({ bookingId, userId });
 
@@ -164,7 +165,13 @@ router.get('/status/:status', verifyToken, async (req, res) => {
 
 // POST hold booking for 10 minutes
 router.post('/hold', verifyToken, async (req, res) => {
-    const { userId, labId, slotDate, timeSlot } = req.body;
+    const { labId, slotDate, timeSlot } = req.body;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
     if (!userId || !labId || !slotDate || !timeSlot) {
         return res.status(400).json({ error: 'labId, slotDate and timeSlot are required.' });
     }
@@ -326,7 +333,7 @@ router.post('/confirm', verifyToken, async (req, res) => {
                 .input('userId', sql.Int, userId)
                 .input('ref', sql.NVarChar(50), ref ?? null)
                 .input('walkInLabId', sql.Int, labId)
-                .input('totalPrice', sql.Decimal(12, 6), totalPrice)
+                .input('totalPrice', sql.Numeric(12, 2), totalPrice)
                 .input('isWalkIn', sql.Bit, isWalkIn ? 1 : 0)
                 .input('homeAddress', sql.NVarChar(sql.MAX), homeAddress)
                 .input('postCode', sql.NVarChar(50), postCode)
@@ -394,27 +401,37 @@ router.post('/confirm', verifyToken, async (req, res) => {
         const paymentResult = await new sql.Request(transaction)
             .input('ref', sql.NVarChar(50), bookingRef)
             .input('userId', sql.Int, userId)
-            .input('subTotal', sql.Decimal(12, 6), paymentSubTotal)
+            .input('subTotal', sql.Numeric(12, 2), paymentSubTotal)
             .input('currency', sql.NVarChar(50), 'NGN')
             .input('gatewayStatus', sql.NVarChar(50), gatewayMessage)
             .input('gatewayProvider', sql.NVarChar(50), gatewayProvider)
             .input('gatewayTransactionId', sql.NVarChar(255), gatewayTransactionId)
             .input('gatewayReference', sql.NVarChar(255), gatewayReference)
-            .input('serviceFee', sql.Decimal(12, 6), serviceFee)
-            .input('VAT', sql.Decimal(12, 6), vat)
+            .input('serviceFee', sql.Numeric(12, 2), serviceFee)
+            .input('VAT', sql.Numeric(12, 2), vat)
             .input('createdBy', sql.NVarChar(255), String(userId))
             .input('lineItems', sql.NVarChar(sql.MAX), JSON.stringify(lineItems))
             .execute('usp_record_payment');
-
+        
         const paymentRow = paymentResult.recordset?.[0];
         if (!paymentRow || paymentRow.resultCode !== 0) {
-            fail(500, 'Failed to record payment. Booking has been rolled back.', paymentLabId);
+            if (paymentRow?.resultCode === 6) {
+                // console.log('here')
+                fail(400, 'Line items do not sum to the total charged.');
+            }
+
+            if (paymentRow?.resultCode === 7) {
+                // console.log('here2')
+                fail(400, 'One or more bookingIds are invalid.');
+            }
+
+            fail(500, 'Failed to record payment. Booking has been rolled back.');
         }
 
         if (bookingFor === 'someone') {
             if (!customerDetails?.fullName || !customerDetails?.email || !customerDetails?.phone) {
-                console.log('customer details problem')
-                fail(400, 'customerDetails.fullName, customerDetails.email and customerDetails.phone are required.', paymentLabId);
+                // console.log('customer details problem')
+                fail(400, 'customerDetails.fullName, customerDetails.email and customerDetails.phone are required.');
             }
 
             await new sql.Request(transaction)
@@ -430,7 +447,6 @@ router.post('/confirm', verifyToken, async (req, res) => {
         await transaction.commit();
         return res.json(resultsArray);
     } catch (err) {
-        console.log(err)
         if (txBegun) {
             try {
                 await transaction.rollback();
@@ -460,8 +476,11 @@ router.post('/confirm', verifyToken, async (req, res) => {
 router.put('/update-booking', verifyToken, async (req, res) => {
 
     const booking = req.body.data;
-    const user = req.body.user;
-    const userId = user.user.id;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
 
     const { id: labId } = booking.lab;
     const { bookingId, newHoldId } = booking;
@@ -515,8 +534,11 @@ router.put('/update-booking', verifyToken, async (req, res) => {
 
 router.post('/cancel-booking', verifyToken, async (req, res) => {
     const booking = req.body.data;
-    const user = req.body.user;
-    const userId = user.user.id;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
 
     const { id: labId } = booking.lab;
     const { bookingId } = booking;
@@ -559,11 +581,20 @@ router.post('/cancel-booking', verifyToken, async (req, res) => {
 
 
 // PUT update booking
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyToken, async (req, res) => {
     const { ref, labId, date, time, status, total, addOns, isWalkIn, homeAddress, services } = req.body;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const transaction = new sql.Transaction(pool);
 
     try {
-        const request = pool.request();
+        await transaction.begin();
+
+        const request = new sql.Request(transaction);
         request.input('id', sql.VarChar(50), req.params.id);
         request.input('ref', sql.VarChar(50), ref);
         request.input('labId', sql.VarChar(50), labId);
@@ -579,17 +610,17 @@ router.put('/:id', async (req, res) => {
       UPDATE Bookings 
       SET ref = @ref, labId = @labId, date = @date, time = @time, status = @status, 
           total = @total, addOns = @addOns, isWalkIn = @isWalkIn, homeAddress = @homeAddress
-      WHERE id = @id
+            WHERE id = @id
     `);
 
         // Update booking services if provided
         if (services && Array.isArray(services)) {
-            const deleteRequest = pool.request();
+            const deleteRequest = new sql.Request(transaction);
             deleteRequest.input('bookingId', sql.VarChar(50), req.params.id);
             await deleteRequest.query('DELETE FROM BookingServices WHERE bookingId = @bookingId');
 
             for (const serviceId of services) {
-                const serviceRequest = pool.request();
+                const serviceRequest = new sql.Request(transaction);
                 serviceRequest.input('bookingId', sql.VarChar(50), req.params.id);
                 serviceRequest.input('serviceId', sql.VarChar(50), serviceId);
                 await serviceRequest.query(`
@@ -599,31 +630,50 @@ router.put('/:id', async (req, res) => {
             }
         }
 
+        await transaction.commit();
+
         res.json({
             id: req.params.id, ref, labId, date, time, status, total, addOns, isWalkIn, homeAddress, services
         });
     } catch (err) {
+        if (transaction._aborted !== true) {
+            await transaction.rollback();
+        }
         console.error('Error updating booking:', err);
         res.status(500).json({ error: 'Failed to update booking' });
     }
 });
 
 // DELETE booking
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyToken, async (req, res) => {
+    const userId = req.user?.userId;
+
+    if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const transaction = new sql.Transaction(pool);
+
     try {
-        const request = pool.request();
+        await transaction.begin();
+        const request = new sql.Request(transaction);
         request.input('id', sql.VarChar(50), req.params.id);
 
         // Delete booking services first
-        const deleteServicesRequest = pool.request();
+        const deleteServicesRequest = new sql.Request(transaction);
         deleteServicesRequest.input('bookingId', sql.VarChar(50), req.params.id);
         await deleteServicesRequest.query('DELETE FROM BookingServices WHERE bookingId = @bookingId');
 
         // Delete booking
         await request.query('DELETE FROM Bookings WHERE id = @id');
 
+        await transaction.commit();
+
         res.json({ message: 'Booking deleted successfully' });
     } catch (err) {
+        if (transaction._aborted !== true) {
+            await transaction.rollback();
+        }
         console.error('Error deleting booking:', err);
         res.status(500).json({ error: 'Failed to delete booking' });
     }
@@ -837,7 +887,11 @@ router.post('/addbooking', verifyToken, async (req, res) => {
 // // GET user test results
 router.get('/results/:userId', verifyToken, async (req, res) => {
 
-    const userId = req.params.userId;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
 
     try {
 

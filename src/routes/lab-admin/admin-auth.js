@@ -117,9 +117,10 @@ router.post('/register', async (req, res) => {
 });
 
 router.post('/login', async (req, res) => {
-  const { labId, email, password } = req.body;
+
+  const { labId, email, password, mode } = req.body;
   const isSuper = req.body.source === "super"
-  
+
   // Validation
   if (!email || !password) {
     return res.status(400).json({
@@ -133,17 +134,40 @@ router.post('/login', async (req, res) => {
 
     const request = pool.request();
 
-    // request.input('labId', sql.Int, labId);
     request.input('email', sql.VarChar(255), sanitizedEmail);
-
-    const result = await request.query(`
+    request.input('labId', sql.Int, labId ?? null);
+    let result
+    if (isSuper) {
+      if (mode === "lab") {
+        if (!labId) {
+          return res.status(400).json({ error: 'labId is required in lab mode' });
+        }
+        console.log('check lab', labId)
+        let query = `
             SELECT a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
             FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
-            WHERE a.email = @email ${isSuper === true ? ` AND isSuper = 1` :``}
+            WHERE a.labId = @labId
+        `
+        result = await request.query(query);
+      } else {
+        console.log('check super')
+        result = await request.query(`
+            SELECT a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
+            FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
+            WHERE a.email = @email AND isSuper = 1
         `);
+      }
+    } else {
+      result = await request.query(`
+            SELECT a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
+            FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
+            WHERE a.email = @email
+        `);
+    }
 
     // Admin not found
     if (result.recordset.length === 0) {
+      
       return res.status(401).json({
         error: 'Invalid credentials'
       });
@@ -159,15 +183,18 @@ router.post('/login', async (req, res) => {
     }
 
     // Password verification
-    const passwordMatch = await bcrypt.compare(
-      password,
-      admin.passwordHash
-    );
+    if (!isSuper) {
+      console.log('check2')
+      const passwordMatch = await bcrypt.compare(
+        password,
+        admin.passwordHash
+      );
 
-    if (!passwordMatch) {
-      return res.status(401).json({
-        error: 'Invalid credentials'
-      });
+      if (!passwordMatch) {
+        return res.status(401).json({
+          error: 'Invalid credentials'
+        });
+      }
     }
 
 
@@ -195,11 +222,6 @@ router.post('/login', async (req, res) => {
                 SET lastLoginAt = SYSUTCDATETIME()
                 WHERE id = @id
             `);
-
-    // const adminLab = await pool.request()
-    //   .input('labId', sql.Int, admin.labId)
-    //   .query(`SELECT * FROM labs WHERE id = @labId`);
-    // const lab = adminLab.recordset
 
     const adminLabServices = await pool.request()
       .input('labId', sql.Int, admin.labId)

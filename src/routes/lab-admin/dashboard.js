@@ -86,10 +86,7 @@ router.get('/stats', verifyAdmin, async (req, res) => {
 
 router.get('/service-categories', async (req, res) => {
     try {
-        const transaction = new sql.Transaction(pool);
-        await transaction.begin();
-        const serviceRequest = new sql.Request(transaction);
-        const serviceResult = await serviceRequest
+        const serviceResult = await pool.request()
             .query(`
                 SELECT DISTINCT id, name, category, description FROM lk_services WHERE isActive = 1
             `);
@@ -235,18 +232,13 @@ router.patch('/services/update', verifyAdmin, async (req, res) => {
 
 // // GET bookings Returns only bookings belonging to the admin's lab
 router.get('/bookings', verifyAdmin, async (req, res) => {
-
     const labId = req.admin.labId;
-
     try {
 
         const result = await pool.request()
             .input('labId', sql.Int, labId)
             .query(`SELECT id, id as bookingId, userId, ref, labId, totalPrice as total, status, isWalkIn, date, time, homeAddress, postCode, addOns, createdAt from bookings WHERE labId = @labId ORDER BY createdAt DESC`)
 
-        if (result.recordset.length === 0) {
-            return [];
-        }
 
         const bookings = result.recordset;
 
@@ -263,6 +255,7 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
                 .query(`SELECT id, email, firstName, lastName FROM users WHERE id = @userId`);
             booking.user = userResult.recordset
         }
+
         return res.status(200).json({
             success: true,
             count: bookings.length,
@@ -345,6 +338,8 @@ router.patch('/bookings/:id/status', verifyAdmin, async (req, res) => {
         });
     }
 
+    let transaction;
+
     try {
         if (status === 'cancelled') {
             const result = await pool.request()
@@ -388,15 +383,26 @@ router.patch('/bookings/:id/status', verifyAdmin, async (req, res) => {
             });
         }
 
-        // Update the booking status and updatedAt timestamp
-        await pool.request()
+        // Update booking and booking services atomically.
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        await new sql.Request(transaction)
             .input('bookingId', sql.Int, bookingId)
+            .input('labId', sql.Int, labId)
             .input('status', sql.VarChar(50), status)
-            .input('ref', sql.VarChar(50), status)
             .query(`
-                UPDATE bookings SET status = @status, updatedAt = GETDATE() WHERE id = @bookingId; 
-                UPDATE booking_services SET status = @status, updatedAt = GETDATE() WHERE bookingId = @bookingId`
-            );
+                UPDATE bookings
+                SET status = @status, updatedAt = GETDATE()
+                WHERE id = @bookingId
+                AND labId = @labId;
+
+                UPDATE booking_services
+                SET status = @status, updatedAt = GETDATE()
+                WHERE bookingId = @bookingId;
+            `);
+
+        await transaction.commit();
 
         return res.status(200).json({
             success: true,
@@ -405,6 +411,14 @@ router.patch('/bookings/:id/status', verifyAdmin, async (req, res) => {
         });
 
     } catch (err) {
+
+        if (transaction && transaction._aborted !== true) {
+            try {
+                await transaction.rollback();
+            } catch (_rollbackErr) {
+                // no-op
+            }
+        }
 
         console.error('Error updating booking status:', err);
 

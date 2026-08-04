@@ -161,9 +161,15 @@ router.patch('/update', verifyAdmin, async (req, res) => {
 
         const testResultComment = await pool.request()
             .input('bookingId', sql.Int, bookingId)
+            .input('labId', sql.Int, labId)
             .input('commentsBy', sql.Int, adminId)
             .input('testComments', sql.VarChar(MAX), comment)
-            .query(`UPDATE test_results SET testComments = @testComments, commentsBy = @commentsBy, commentsDate = GETDATE() WHERE bookingId = @bookingId `);
+            .query(`
+                UPDATE test_results
+                SET testComments = @testComments, commentsBy = @commentsBy, commentsDate = GETDATE()
+                WHERE bookingId = @bookingId
+                AND labId = @labId
+            `);
 
         return res.status(201).json({
             success: true,

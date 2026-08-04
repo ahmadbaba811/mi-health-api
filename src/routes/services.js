@@ -94,7 +94,7 @@ router.get('/category/:category', verifyToken, async (req, res) => {
 }); */
 
 // PUT update service
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyAdmin, async (req, res) => {
   const { name, price, duration, category, description, preparation } = req.body;
 
   try {
@@ -122,7 +122,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE service
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyAdmin, async (req, res) => {
   try {
     const request = pool.request();
     request.input('id', sql.VarChar(50), req.params.id);

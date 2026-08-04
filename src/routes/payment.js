@@ -5,11 +5,26 @@ const { verifyToken } = require('../middleware/auth');
 const https = require('https')
 
 // Initialize payment
-router.post("/initialize", async (req, res) => {
+router.post("/initialize", verifyToken, async (req, res) => {
     try {
+        if (!req.body?.email || typeof req.body.email !== 'string') {
+            return res.status(400).json({
+                success: false,
+                message: "email is required",
+            });
+        }
+
+        const amount = Number(req.body.amount);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: "amount must be a positive number",
+            });
+        }
+
         const params = JSON.stringify({
             email: req.body.email,
-            amount: req.body.amount * 100, // ₦5,000.00 in kobo
+            amount: Math.round(amount * 100),
         });
 
         const options = {

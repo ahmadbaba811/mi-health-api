@@ -1,11 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../db');
+const { verifyToken } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 const { buildEmailHtml } = require('../templates/email-template');
 
 // GET /users - list users (example)
-router.get('/', async (req, res) => {
+router.get('/', verifyToken, async (req, res) => {
   try {
     const request = pool.request();
     const result = await request.query('SELECT TOP (100) * FROM [Users]');
@@ -17,11 +18,21 @@ router.get('/', async (req, res) => {
 });
 
 // GET /users/:id - get user by id (example)
-router.get('/:id', async (req, res) => {
+router.get('/:id', verifyToken, async (req, res) => {
   const id = req.params.id;
+  const tokenUserId = req.user?.userId;
+
+  if (!tokenUserId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (Number(tokenUserId) !== Number(id)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
   try {
     const request = pool.request();
-    request.input('id', sql.Int, parseInt(id));
+    request.input('id', sql.Int, Number(id));
     const result = await request.query('SELECT id, firstName, lastName, orgName, email, phone, altPhone, address, birthYear, photoUrl FROM users WHERE id = @id');
     const user = result.recordset[0];
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -33,8 +44,19 @@ router.get('/:id', async (req, res) => {
 });
 
 // PUT /users/:id - update user
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyToken, async (req, res) => {
+  
   const id = req.params.id;
+  const tokenUserId = req.user?.userId;
+
+  if (!tokenUserId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (Number(tokenUserId) !== Number(id)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
   const {
     accountType,
     firstName,
@@ -87,6 +109,11 @@ router.put('/:id', async (req, res) => {
 
 router.post('/verify-email', async (req, res) => {
   const email = req.body.email;
+
+  if (!email || typeof email !== 'string') {
+    return res.status(400).json({ error: 'email is required' });
+  }
+
   try {
     const request = pool.request();
     request.input('email', sql.VarChar(255), email);
@@ -94,11 +121,11 @@ router.post('/verify-email', async (req, res) => {
     const user = result.recordset[0]
     if (user && user.emailVerified === null) {
       await request.query(`UPDATE users SET emailVerified = 'verified' WHERE email=@email`)
-      res.status(200).json({ verified: true })
+      return res.status(200).json({ verified: true })
     }
 
     if (user && user.emailVerified === 'verified') {
-      res.status(200).json({ exists: true })
+      return res.status(200).json({ exists: true })
     }
 
     if (!user) return res.status(404).json({ error: 'User not found' });

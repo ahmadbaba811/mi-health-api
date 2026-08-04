@@ -28,7 +28,15 @@ router.post('/login', async (req, res) => {
     }
 
     const admin = rows[0];
-    const passwordMatches = admin.password === password || admin.password_hash === password;
+    const hash = admin.passwordHash || admin.password_hash;
+    let passwordMatches = false;
+
+    if (typeof hash === 'string' && hash.startsWith('$2')) {
+      passwordMatches = await bcrypt.compare(password, hash);
+    } else {
+      passwordMatches = admin.password === password || admin.password_hash === password;
+    }
+
     if (!passwordMatches) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -40,7 +48,7 @@ router.post('/login', async (req, res) => {
         role: admin.role || 'super_admin',
         firstName: admin.first_name || admin.name || 'Admin',
       },
-      JWT_SECRET,
+      process.env.JWT_SECRET,
       { expiresIn: '8h' }
     );
 
@@ -70,7 +78,7 @@ router.get('/overview', verifyAdmin, async (_req, res) => {
     const onboardingResult = await onboardingRequest.query("SELECT COUNT(*) AS value FROM labs WHERE status = 'pending review'");
 
     const bookingsRequest = pool.request();;
-    const bookingsResult = await bookingsRequest.query("SELECT * FROM bookings WHERE status <> 'completed' AND CAST(createdAt AS DATE) = CAST(GETDATE() AS DATE)");
+    const bookingsResult = await bookingsRequest.query("SELECT COUNT(*) AS value FROM bookings WHERE status <> 'completed' AND CAST(createdAt AS DATE) = CAST(GETDATE() AS DATE)");
 
     const revenueRequest = pool.request();;
     const revenueResult = await revenueRequest.query('SELECT COALESCE(SUM(amount), 0) AS value FROM payments');
@@ -87,7 +95,7 @@ router.get('/overview', verifyAdmin, async (_req, res) => {
   }
 });
 
-router.get('/labs', verifyAdmin, async (_req, res) => {
+router.get('/labs', async (_req, res) => {
   try {
     const request = pool.request();;
     const result = await request.query(`

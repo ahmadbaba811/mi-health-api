@@ -2,9 +2,11 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { pool, sql } = require('../db');
 const { verifyToken } = require('../middleware/auth');
+const { sendEmail } = require('../utils/email');
 const { contentSecurityPolicy } = require('helmet');
 
 
@@ -15,10 +17,27 @@ const loginLimiter = rateLimit({
   message: 'Too many login attempts',
   standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
   legacyHeaders: false, // Disable `X-RateLimit-*` headers
+  skipSuccessfulRequests: true,
   skip: (req) => {
     // Skip rate limiting for health checks or non-login endpoints
     return req.path !== '/login';
   }
+});
+
+const passwordOpsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: 'Too many requests, please try again later',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const passwordResetRequestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: 'Too many password reset requests, please try again later',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // Input validation helper
@@ -139,7 +158,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     request.input('email', sql.VarChar(255), sanitizedEmail);
 
     const result = await request.query(`
-      SELECT id, email, passwordHash, isActive, firstName, lastName, emailVerified FROM Users 
+      SELECT id, email, phone, passwordHash, isActive, firstName, lastName, emailVerified, birthYear, photoUrl FROM Users 
       WHERE email = @email
     `);
 
@@ -207,7 +226,10 @@ router.post('/login', loginLimiter, async (req, res) => {
         id: user.id,
         email: user.email,
         firstName: user.firstName,
-        lastName: user.lastName
+        lastName: user.lastName,
+        birthYear: user.birthYear,
+        photoUrl: user.photoUrl,
+        phone: user.phone
       }
     });
 
@@ -338,6 +360,10 @@ router.get('/page-data', async (req, res) => {
 // GET registered email
 router.get('/check-email/:email', async (req, res) => {
   try {
+    if (!req.params.email || !isValidEmail(req.params.email)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+
     const request = pool.request();
     request.input('email', sql.VarChar(50), req.params.email);
 
@@ -349,17 +375,126 @@ router.get('/check-email/:email', async (req, res) => {
   }
 });
 
-// POST change password
-router.post('/reset-password', async (req, res) => {
+router.post('/request-password-reset', passwordResetRequestLimiter, async (req, res) => {
   try {
-    const passwordHash = await bcrypt.hash(req.body.newPassword, 10);
+    const email = req.body?.email;
+
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({
+        error: 'Invalid input',
+        message: 'A valid email is required.'
+      });
+    }
+
+    const sanitizedEmail = email.trim().toLowerCase();
 
     const request = pool.request();
-    request.input('email', sql.VarChar(50), req.body.email);
+    request.input('email', sql.VarChar(255), sanitizedEmail);
+
+    const result = await request.query(`
+      SELECT id, email, firstName, lastName, passwordHash
+      FROM users
+      WHERE email = @email
+    `);
+
+    // Do not disclose account existence.
+    if (result.recordset.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'If the account exists, a password reset link has been sent.'
+      });
+    }
+
+    const user = result.recordset[0];
+    const resetToken = jwt.sign(
+      {
+        purpose: 'password_reset',
+        userId: user.id,
+        email: user.email,
+        pwdv: user.passwordHash,
+        jti: crypto.randomUUID()
+      },
+      process.env.JWT_SECRET || 'your-secret-key',
+      {
+        expiresIn: '15m',
+        issuer: 'mi-health-api',
+        audience: 'mi-health-client'
+      }
+    );
+
+    const frontendBaseUrl = process.env.NODE_ENV === "dev" ?
+      process.env.CLIENT_APP_URL_DEV : process.env.CLIENT_APP_URL_LIVE || '';
+    const resetUrl = frontendBaseUrl
+      ? `${frontendBaseUrl.replace(/\/$/, '')}/reset-password/${encodeURIComponent(resetToken)}`
+      : null;
+
+    return res.status(200).json({
+      success: true,
+      user: user,
+      resetUrl: resetUrl,
+      message: 'If the account exists, a password reset link has been sent.'
+    });
+  } catch (err) {
+    console.error('Error requesting password reset:', err);
+    return res.status(500).json({ error: 'Failed to fetch data' });
+  }
+});
+
+// POST change password
+router.post('/reset-password', passwordOpsLimiter, async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || typeof token !== 'string' || !newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+      return res.status(400).json({
+        error: 'Invalid input',
+        message: 'A valid reset token and a password with at least 8 characters are required.'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key', {
+        issuer: 'mi-health-api',
+        audience: 'mi-health-client'
+      });
+    } catch (_verifyErr) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    if (decoded?.purpose !== 'password_reset' || !decoded?.email || !decoded?.userId || !decoded?.pwdv) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    const request = pool.request();
+    request.input('email', sql.VarChar(255), String(decoded.email).trim().toLowerCase());
+    const userResult = await request.query(`SELECT id, firstName, lastName, passwordHash FROM users WHERE email = @email`);
+
+    const user = userResult.recordset[0];
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    if (Number(user.id) !== Number(decoded.userId) || user.passwordHash !== decoded.pwdv) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    const samePassword = await bcrypt.compare(newPassword, user.passwordHash);
+    if (samePassword) {
+      return res.status(400).json({
+        error: 'Invalid input',
+        message: 'New password must be different from your current password.'
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+
+    request.input('id', sql.Int, user.id);
     request.input('passwordHash', sql.NVarChar(500), passwordHash)
 
-    await request.query(`UPDATE users SET passwordHash = @passwordHash WHERE email = @email`);
-    const result = await request.query(`SELECT firstName, lastName FROM users WHERE email = @email`);
+    await request.query(`UPDATE users SET passwordHash = @passwordHash WHERE id = @id`);
+
+    const result = await request.query(`SELECT email, firstName, lastName FROM users WHERE id = @id`);
 
     res.status(200).json({ success: true, data: result.recordset[0] });
   } catch (err) {

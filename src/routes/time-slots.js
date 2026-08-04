@@ -2,16 +2,34 @@ const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../db');
 const { formatTime, formatDate } = require('../middleware/helpers');
-const { verifyToken } = require('../middleware/auth');
+const { verifyToken, verifyAdmin } = require('../middleware/auth');
 
 
 router.post('/lab-dates', verifyToken, async (req, res) => {
-  let labIds = req.body.join(',')
+  const labIds = Array.isArray(req.body)
+    ? req.body
+      .map(x => Number(x))
+      .filter(x => Number.isInteger(x) && x > 0)
+    : [];
+
+  if (!labIds.length) {
+    return res.status(400).json({ error: 'Valid lab ids are required' });
+  }
+
   try {
     const request = pool.request();
-    request.input('labIds', sql.VarChar(50), labIds);
+    const placeholders = labIds.map((_, idx) => `@labId${idx}`);
+    labIds.forEach((labId, idx) => {
+      request.input(`labId${idx}`, sql.Int, labId);
+    });
 
-    const result = await request.query(`SELECT id, labId, slotDate, timeSlot, isAvailable, capacity FROM time_slot_availability WHERE labId in (${labIds}) AND slotDate >= CAST(GETDATE() AS DATE) AND isAvailable=1`);
+    const result = await request.query(`
+      SELECT id, labId, slotDate, timeSlot, isAvailable, capacity
+      FROM time_slot_availability
+      WHERE labId IN (${placeholders.join(', ')})
+      AND slotDate >= CAST(GETDATE() AS DATE)
+      AND isAvailable = 1
+    `);
     const dates = result.recordset
     res.json(dates.map(row => ({
       ...row,
@@ -33,7 +51,14 @@ router.post('/lab-times', verifyToken, async (req, res) => {
     request.input('labId', sql.Int, labId);
     request.input('slotDate', sql.DateTime2, slotDate);
 
-    const result = await request.query(`SELECT distinct labId, slotDate, timeSlot FROM time_slot_availability WHERE labId = @labId AND slotDate >= CAST(@slotDate AS DATE) AND timeSlot >= CAST(GETDATE() AS TIME) AND isAvailable = 1 ORDER BY slotDate, timeSlot `);
+    const result = await request.query(`SELECT DISTINCT labId, slotDate, timeSlot FROM time_slot_availability WHERE labId = @labId AND isAvailable = 1 
+      AND (
+        slotDate > CAST(GETDATE() AS DATE)
+        OR (
+            slotDate = CAST(GETDATE() AS DATE)
+            AND timeSlot >= CAST(GETDATE() AS TIME)
+        )
+      ) ORDER BY slotDate, timeSlot `);
     const _times = result.recordset
     res.json(_times.map(row => ({
       ...row,
@@ -97,7 +122,7 @@ function getAllDefaultSlots() {
 }
 
 // POST create time slot availability (admin)
-router.post('/availability', verifyToken, async (req, res) => {
+router.post('/availability', verifyAdmin, async (req, res) => {
   const { labId, date, timeSlot, isAvailable } = req.body;
 
   if (!labId || !date || !timeSlot || isAvailable === undefined) {
@@ -124,7 +149,7 @@ router.post('/availability', verifyToken, async (req, res) => {
 });
 
 // PUT update time slot availability
-router.put('/availability/:id', verifyToken, async (req, res) => {
+router.put('/availability/:id', verifyAdmin, async (req, res) => {
   const { isAvailable } = req.body;
 
   try {

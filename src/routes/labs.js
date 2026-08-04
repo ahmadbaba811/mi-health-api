@@ -3,7 +3,7 @@ const router = express.Router();
 const { pool, sql } = require('../db');
 const { formatTime, findClosestSearch } = require('../middleware/helpers');
 const { Int } = require('mssql');
-const { verifyToken } = require('../middleware/auth');
+const { verifyToken, verifyAdmin } = require('../middleware/auth');
 
 // GET all labs
 router.get('/categories', verifyToken, async (req, res) => {
@@ -313,7 +313,7 @@ router.get('/status/open', verifyToken, async (req, res) => {
 });
 
 // POST create new lab
-router.post('/', async (req, res) => {
+router.post('/', verifyAdmin, async (req, res) => {
     const { id, name, area, address, distance, rating, reviewCount, openTime, closeTime, isOpen, certifications, phone, image } = req.body;
 
     if (!id || !name || !area || !address) {
@@ -354,7 +354,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT update lab
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyAdmin, async (req, res) => {
     const { name, area, address, distance, rating, reviewCount, openTime, closeTime, isOpen, certifications, phone, image } = req.body;
 
     try {
@@ -393,7 +393,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE lab
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyAdmin, async (req, res) => {
     try {
         const request = pool.request();
         request.input('id', sql.VarChar(50), req.params.id);
