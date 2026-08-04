@@ -243,166 +243,215 @@ router.post('/release-hold', verifyToken, async (req, res) => {
 
 // POST confirm booking i.e convert held booking to full booking after payment
 router.post('/confirm', verifyToken, async (req, res) => {
-    const bookings = req.body.data;
-    const dt = req.body;
-   
-    const { subTotal, addOnsTotal, bookingFor, customerDetails } = req.body
-    const labOnlySubTotal = subTotal
+    const bookings = Array.isArray(req.body.data) ? req.body.data : [];
+    const {
+        subTotal,
+        bookingFor,
+        customerDetails,
+        serviceFee,
+        vat,
+        gatewayProvider,
+        gatewayTransactionId,
+        gatewayReference,
+        gatewayMessage
+    } = req.body;
+    const userId = req.user?.userId
 
-    const user = req.body.user
-    const results_array = []
+    if (!bookings.length) {
+        return res.json([{
+            status: 404,
+            error: 'No bookings to confirm.'
+        }]);
+    }
 
-    let lineItems = [];
-    let bk_Id = 0
-    if (bookings.length > 0) {
-        await Promise.all(bookings.map(async (b, index) => {
-            const userId = user.user.id;
-            const { id: labId } = b.lab;
+    if (!userId) {
+        return res.status(401).json([{
+            status: 401,
+            error: 'Unable to resolve authenticated user.'
+        }]);
+    }
+
+    if (!gatewayProvider || !gatewayTransactionId || !gatewayReference) {
+        console.log('gatway problem')
+        return res.status(400).json([{
+            status: 400,
+            error: 'gatewayProvider, gatewayTransactionId and gatewayReference are required.'
+        }]);
+    }
+
+    const resultsArray = [];
+    const lineItems = [];
+    const firstBooking = bookings[0] || {};
+    const bookingRef = firstBooking.ref ?? null;
+    const paymentSubTotal = subTotal;
+
+    const fail = (status, error, labId = null) => {
+        const err = new Error(error);
+        err.status = status;
+        err.labId = labId;
+        throw err;
+    };
+
+    const transaction = new sql.Transaction(pool);
+    let txBegun = false;
+
+    try {
+        await transaction.begin();
+        txBegun = true;
+
+        // Process sequentially so all writes stay on a single transaction-bound connection.
+        for (const b of bookings) {
+            const labId = b.lab?.id;
             const services = b.services;
-            const addOns = b.addOns?.join(", ");
-            const { holdId, ref, isWalkIn, status } = b;
-            const slotDate = b.date === "" ? null : b.date
-            const slotTime = b.time === "" ? null : b.time
+            const addOns = Array.isArray(b.addOns) ? b.addOns.join(', ') : null;
+            const { holdId, ref, isWalkIn } = b;
             const homeAddress = b.homeAddress ?? null;
             const postCode = b.postCode ?? null;
-            const totalPrice = b.total
-            const labServiceTotal = b.labServiceTotal
-            const labAddOnDetails = b.labAddOnDetails
+            const totalPrice = b.total;
+            const labServiceTotal = b.labServiceTotal;
+            const labAddOnDetails = Array.isArray(b.labAddOnDetails) ? b.labAddOnDetails : [];
 
-            // Basic validation
-            if (!labId || !totalPrice || !Array.isArray(services) || !services.length) {
-                // return res.status(400).json({ error: 'Missing required booking fields.' });
-                console.log(ref, 400, 'Missing required booking fields.', holdId, labId, totalPrice, slotDate, slotTime, Array.isArray(services), services.length)
-                results_array.push({
-                    status: 400,
-                    error: 'Missing required booking fields.'
-                })
+            if (!labId || !totalPrice || !Array.isArray(services) || services.length === 0) {
+                console.log('service problem')
+                fail(400, 'Missing required booking fields.', labId);
             }
 
             if (totalPrice <= 0) {
-                // return res.status(400).json({ error: 'totalPrice must be non-negative.' });
-                console.log(ref, 400, 'totalPrice must be non-negative.')
-                results_array.push({
-                    status: 400,
-                    error: 'totalPrice must be non-negative.'
-                })
+                console.log('price problem')
+                fail(400, 'totalPrice must be non-negative.', labId);
             }
 
+            const confirmResult = await new sql.Request(transaction)
+                .input('holdId', sql.Int, holdId)
+                .input('userId', sql.Int, userId)
+                .input('ref', sql.NVarChar(50), ref ?? null)
+                .input('walkInLabId', sql.Int, labId)
+                .input('totalPrice', sql.Decimal(12, 6), totalPrice)
+                .input('isWalkIn', sql.Bit, isWalkIn ? 1 : 0)
+                .input('homeAddress', sql.NVarChar(sql.MAX), homeAddress)
+                .input('postCode', sql.NVarChar(50), postCode)
+                .input('addOns', sql.NVarChar(50), addOns)
+                .input('createdBy', sql.NVarChar(255), String(userId))
+                .input('services', sql.NVarChar(sql.MAX), JSON.stringify(services))
+                .input('gatewayReference', sql.NVarChar(50), gatewayReference)
+                .input('gatewayTransactionId', sql.NVarChar(255), gatewayTransactionId)
+                .execute('usp_confirm_booking');
+
+            const confirmRow = confirmResult.recordset?.[0];
+
+            if (!confirmRow) {
+                fail(500, 'Failed to confirm booking. Please try again.', labId);
+            }
+
+            if (confirmRow.resultCode === RESULT.SUCCESS) {
+                lineItems.push({
+                    bookingId: confirmRow.bookingId,
+                    labId,
+                    amount: labServiceTotal,
+                    type: 'lab_subtotal',
+                    description: `Booking fee for ${b.lab?.name || 'lab'}`,
+                    addOnId: null
+                });
+
+                if (labAddOnDetails.length > 0) {
+                    const addOnItems = labAddOnDetails.map(x => ({
+                        bookingId: confirmRow.bookingId,
+                        labId,
+                        amount: x.price,
+                        type: 'lab_add_on',
+                        description: `Add-On fee for ${b.lab?.name || 'lab'}`,
+                        addOnId: x.id
+                    }));
+                    lineItems.push(...addOnItems);
+                }
+
+                resultsArray.push({
+                    status: 201,
+                    bookingId: confirmRow.bookingId,
+                    message: 'Booking confirmed successfully.',
+                    labId
+                });
+
+                continue;
+            }
+
+            if (confirmRow.resultCode === RESULT.HOLD_EXPIRED_OR_INVALID && isWalkIn === false) {
+                fail(410, 'Your slot reservation has expired or is invalid. Please select a new time slot.', labId);
+            }
+
+            if (confirmRow.resultCode === 2) {
+                fail(409, 'Unable to confirm slot hold. Please retry.', labId);
+            }
+
+            if (confirmRow.resultCode === 5) {
+                console.log('here')
+                fail(410, 'This booking has already been processed.', labId);
+            }
+
+            fail(500, 'Failed to confirm booking. Please try again.', labId);
+        }
+
+        const paymentResult = await new sql.Request(transaction)
+            .input('ref', sql.NVarChar(50), bookingRef)
+            .input('userId', sql.Int, userId)
+            .input('subTotal', sql.Decimal(12, 6), paymentSubTotal)
+            .input('currency', sql.NVarChar(50), 'NGN')
+            .input('gatewayStatus', sql.NVarChar(50), gatewayMessage)
+            .input('gatewayProvider', sql.NVarChar(50), gatewayProvider)
+            .input('gatewayTransactionId', sql.NVarChar(255), gatewayTransactionId)
+            .input('gatewayReference', sql.NVarChar(255), gatewayReference)
+            .input('serviceFee', sql.Decimal(12, 6), serviceFee)
+            .input('VAT', sql.Decimal(12, 6), vat)
+            .input('createdBy', sql.NVarChar(255), String(userId))
+            .input('lineItems', sql.NVarChar(sql.MAX), JSON.stringify(lineItems))
+            .execute('usp_record_payment');
+
+        const paymentRow = paymentResult.recordset?.[0];
+        if (!paymentRow || paymentRow.resultCode !== 0) {
+            fail(500, 'Failed to record payment. Booking has been rolled back.', paymentLabId);
+        }
+
+        if (bookingFor === 'someone') {
+            if (!customerDetails?.fullName || !customerDetails?.email || !customerDetails?.phone) {
+                console.log('customer details problem')
+                fail(400, 'customerDetails.fullName, customerDetails.email and customerDetails.phone are required.', paymentLabId);
+            }
+
+            await new sql.Request(transaction)
+                .input('ref', sql.NVarChar(50), bookingRef)
+                .input('fullName', sql.NVarChar(50), customerDetails.fullName)
+                .input('email', sql.NVarChar(50), customerDetails.email)
+                .input('phone', sql.NVarChar(50), customerDetails.phone)
+                .input('birthYear', sql.NVarChar(50), customerDetails.yearOfBirth ?? null)
+                .input('bookedBy', sql.NVarChar(255), String(userId))
+                .query('INSERT INTO booking_users (ref, fullName, email, phone, birthYear, bookedBy, bookedAt) VALUES (@ref, @fullName, @email, @phone, @birthYear, @bookedBy, GETDATE())');
+        }
+
+        await transaction.commit();
+        return res.json(resultsArray);
+    } catch (err) {
+        console.log(err)
+        if (txBegun) {
             try {
-                const result = await pool.request()
-                    .input('holdId', sql.Int, holdId)
-                    .input('userId', sql.Int, userId)
-                    .input('ref', sql.NVarChar(50), ref ?? null)
-                    .input('walkInLabId', sql.Int, labId)
-                    .input('totalPrice', sql.Decimal(12, 6), totalPrice)
-                    .input('isWalkIn', sql.Bit, isWalkIn ? 1 : 0)
-                    .input('homeAddress', sql.NVarChar(sql.MAX), homeAddress ?? null)
-                    .input('postCode', sql.NVarChar(50), postCode ?? null)
-                    .input('addOns', sql.NVarChar(50), addOns ?? null)
-                    .input('createdBy', sql.NVarChar(255), String(userId))
-                    .input('services', sql.NVarChar(sql.MAX), JSON.stringify(services))
-                    .input('gatewayProvider', sql.NVarChar(50), ref)
-                    .input('gatewayTransactionId', sql.NVarChar(50), ref)
-                    .execute('usp_confirm_booking');
-
-                const row = result.recordset[0];
-                
-                if (row.resultCode === RESULT.SUCCESS) {
-                    lineItems.push({ bookingId: row.bookingId, amount: labServiceTotal, type: "lab_subtotal", description: `Booking fee for ${b.lab.name}`, addOnId: null })
-
-                    if (labAddOnDetails.length > 0) {
-                        const add_ons_items = labAddOnDetails?.map(x => {
-                            return { bookingId: row.bookingId, amount: x.price, type: "lab_add_on", description: `Add On fee for ${b.lab.name}`, addOnId: x.id }
-                        })
-                        lineItems.push(...add_ons_items)
-                    }
-
-                    results_array.push({
-                        status: 201,
-                        bookingId: row.bookingId,
-                        message: 'Booking confirmed successfully.',
-                        labId: labId
-                    })
-                }
-
-
-                if (row.resultCode === RESULT.HOLD_EXPIRED_OR_INVALID) {
-                    if (isWalkIn === false) {
-                        // console.log(ref, '410', 'Your slot reservation has expired')
-                        results_array.push({
-                            status: 410,
-                            error: 'Your slot reservation has expired or is invalid. Please select a new time slot.',
-                            labId: labId
-                        })
-                    }
-                }
-                if (row.resultCode === 5) {
-                    console.log(ref, '410', 'This payment has already been processed.')
-                    results_array.push({
-                        status: 410,
-                        error: 'This booking has already been processed.',
-                        labId: labId
-                    })
-                }
-
-            } catch (err) {
-                console.error('[confirmBooking] DB error:', err);
-                results_array.push({
-                    status: 500,
-                    error: 'Failed to confirm booking. Please try again.',
-                    labId: labId
-                })
+                await transaction.rollback();
+            } catch (rollbackErr) {
+                console.error('[confirmBooking] rollback error:', rollbackErr);
             }
+        }
 
-            if (index + 1 === bookings.length) {
-                const booking_outcome = results_array[0]
+        const status = err.status || 500;
+        const error = err.message || 'Failed to confirm booking. Please try again.';
+        const labId = err.labId ?? null;
 
-                // RECORD PAYMENTS BEFORE SENDING BACK RESPONSE
+        if (status === 500) {
+            console.error('[confirmBooking] DB error:', err);
+        }
 
-                if (booking_outcome?.status === 201) {
-                    const pay_result = await pool.request()
-                        .input('ref', sql.NVarChar(50), ref ?? null)
-                        .input('userId', sql.Int, userId)
-                        .input('labId', sql.Int, labId)
-                        .input('subTotal', sql.Decimal(12, 6), totalPrice)
-                        .input('currency', sql.NVarChar(50), "NGN")
-                        .input('paymentMethod', sql.NVarChar(50), "paystack")
-                        .input('gatewayProvider', sql.NVarChar(50), ref)
-                        .input('gatewayTransactionId', sql.NVarChar(50), ref)
-                        .input('gatewayReference', sql.NVarChar(50), ref)
-                        .input('serviceFee', sql.Decimal(12, 6), dt.serviceFee)
-                        .input('VAT', sql.Decimal(12, 6), dt.vat)
-                        .input('createdBy', sql.NVarChar(255), String(userId))
-                        .input('lineItems', sql.NVarChar(sql.MAX), JSON.stringify(lineItems))
-                        .execute('usp_record_payment');
-
-                    const row = pay_result.recordset[0];
-
-                    if (row.resultCode !== 0) {
-                        // SEND ADMIN AN EMAIL NOTIFICATION WITH THE FAILED PAYMENT RECORD DETAILS
-                        const b = { lineItems: lineItems, vat: dt.vat, serviceFee: dt.serviceFee }
-                    }
-
-                    if (bookingFor === "someone") {
-                        const customer_result = await pool.request()
-                            .input('ref', sql.NVarChar(50), ref ?? null)
-                            .input('fullName', sql.NVarChar(50), customerDetails.fullName)
-                            .input('email', sql.NVarChar(50), customerDetails.email)
-                            .input('phone', sql.NVarChar(50), customerDetails.phone)
-                            .input('birthYear', sql.NVarChar(50), customerDetails.yearOfBirth)
-                            .input('bookedBy', sql.NVarChar(255), String(userId))
-                            .query('INSERT INTO booking_users (ref, fullName, email, phone, birthYear, bookedBy, bookedAt) VALUES (@ref, @fullName, @email, @phone, @birthYear, @bookedBy, GETDATE())');
-                    }
-                }
-
-                res.json(results_array)
-            }
-        }))
-    } else {
-        res.json([{
-            status: 404,
-            error: 'No bookings to confirm.'
-        }])
+        return res.status(status).json([{
+            status,
+            error,
+            labId
+        }]);
     }
 })
 

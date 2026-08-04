@@ -21,7 +21,7 @@ router.get('/:id', async (req, res) => {
   const id = req.params.id;
   try {
     const request = pool.request();
-    request.input('id', sql.Int, id);
+    request.input('id', sql.Int, parseInt(id));
     const result = await request.query('SELECT id, firstName, lastName, orgName, email, phone, altPhone, address, birthYear, photoUrl FROM users WHERE id = @id');
     const user = result.recordset[0];
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -41,9 +41,9 @@ router.put('/:id', async (req, res) => {
     lastName,
     orgName,
     phone,
-    additionalPhone,
+    altPhone,
     address,
-    yearOfBirth,
+    birthYear,
   } = req.body;
 
   try {
@@ -54,9 +54,9 @@ router.put('/:id', async (req, res) => {
     request.input('lastName', sql.VarChar(255), lastName);
     request.input('orgName', sql.VarChar(255), orgName);
     request.input('phone', sql.VarChar(50), phone);
-    request.input('additionalPhone', sql.VarChar(50), additionalPhone);
+    request.input('altPhone', sql.VarChar(50), altPhone);
     request.input('address', sql.VarChar(500), address);
-    request.input('yearOfBirth', sql.Int, yearOfBirth);
+    request.input('birthYear', sql.Int, birthYear);
 
     const result = await request.query(`
       UPDATE users
@@ -65,9 +65,9 @@ router.put('/:id', async (req, res) => {
         lastName = @lastName,
         orgName = @orgName,
         phone = @phone,
-        altPhone = @additionalPhone,
+        altPhone = @altPhone,
         address = @address,
-        birthYear = @yearOfBirth
+        birthYear = @birthYear
       WHERE id = @id;
 
       SELECT id, accountType, firstName, lastName, orgName, email, phone, altPhone, address, birthYear, photoUrl
