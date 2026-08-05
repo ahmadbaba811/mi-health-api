@@ -3,7 +3,7 @@ const helmet = require("helmet");
 const cors = require("cors");
 
 function configureSecurity(app) {
-  const isProduction = process.env.NODE_ENV === "production";
+  const isProduction = process.env.NODE_ENV !== "dev";
 
   const allowedOrigins = isProduction
     ? [
