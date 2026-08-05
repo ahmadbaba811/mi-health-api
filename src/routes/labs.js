@@ -9,7 +9,7 @@ const { verifyToken, verifyAdmin } = require('../middleware/auth');
 router.get('/categories', verifyToken, async (req, res) => {
     try {
         const request = pool.request();
-        const result = await request.query(`SELECT DISTINCT category from lk_services order by category ASC`);
+        const result = await request.query(`SELECT DISTINCT category from lk_services WHERE isActive = 1 order by category ASC`);
         res.json(result.recordset)
 
     } catch (error) {

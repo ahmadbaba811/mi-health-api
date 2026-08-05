@@ -9,6 +9,18 @@ const { verifyAdmin } = require('../../middleware/auth');
 const upload = require('../../middleware/upload');
 
 
+const toBit = (value, fallback = false) => {
+  if (value === undefined || value === null) return fallback
+  if (typeof value === "boolean") return value
+  if (typeof value === "number") return value === 1
+  return String(value).toLowerCase() === "true"
+}
+
+const toNumber = (value, fallback = 0) => {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
 
 router.post('/login', async (req, res) => {
   try {
@@ -542,7 +554,7 @@ router.delete('/onboarding/:id', verifyAdmin, async (req, res) => {
 
 router.get('/billing', verifyAdmin, async (_req, res) => {
   try {
-    const request = pool.request();;
+    const request = pool.request();
     const result = await request.query(`
       SELECT a.id, b.labId, c.name as labName, a.ref, a.amount, a.currency, a.status, a.createdAt
       FROM payments a  INNER JOIN bookings b ON a.ref = b.ref
@@ -554,5 +566,298 @@ router.get('/billing', verifyAdmin, async (_req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
+
+router.get("/services", async (_req, res) => {
+  try {
+    
+    const result = await pool.request().query(`
+      SELECT
+        [id],
+        [name],
+        [category],
+        [description],
+        [isActive],
+        [createdAt],
+        [createdBy],
+        [updatedAt]
+      FROM lk_services
+      ORDER BY [updatedAt] DESC, [createdAt] DESC, [id] DESC;
+    `)
+
+    res.json(result.recordset)
+  } catch (error) {
+    console.log(error)
+    res.status(500).json({ message: "Failed to load services", error: error.message })
+  }
+})
+
+router.post("/services", async (req, res) => {
+  const { name, category, description, isActive, createdBy } = req.body || {}
+
+  if (!String(name || "").trim() || !String(category || "").trim()) {
+    return res.status(400).json({ message: "name and category are required" })
+  }
+
+  try {
+    
+    const result = await pool
+      .request()
+      .input("name", sql.NVarChar(200), String(name).trim())
+      .input("category", sql.NVarChar(120), String(category).trim())
+      .input("description", sql.NVarChar(sql.MAX), String(description || "").trim() || null)
+      .input("isActive", sql.Bit, toBit(isActive, true))
+      .input("createdBy", sql.NVarChar(150), String(createdBy || "system").trim())
+      .query(`
+        INSERT INTO lk_services ([name], [category], [description], [isActive], [createdAt], [createdBy], [updatedAt])
+        OUTPUT INSERTED.*
+        VALUES (@name, @category, @description, @isActive, SYSUTCDATETIME(), @createdBy, SYSUTCDATETIME());
+      `)
+
+    res.status(201).json(result.recordset[0])
+  } catch (error) {
+    res.status(500).json({ message: "Failed to create service", error: error.message })
+  }
+})
+
+router.patch("/services/:id", async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ message: "Invalid service id" })
+  }
+
+  const { name, category, description, isActive } = req.body || {}
+
+  try {
+    
+    const result = await pool
+      .request()
+      .input("id", sql.Int, id)
+      .input("name", sql.NVarChar(200), String(name || "").trim() || null)
+      .input("category", sql.NVarChar(120), String(category || "").trim() || null)
+      .input("description", sql.NVarChar(sql.MAX), description === undefined ? null : (String(description || "").trim() || null))
+      .input("hasIsActive", sql.Bit, isActive === undefined ? 0 : 1)
+      .input("isActive", sql.Bit, toBit(isActive, true))
+      .query(`
+        UPDATE lk_services
+        SET
+          [name] = COALESCE(@name, [name]),
+          [category] = COALESCE(@category, [category]),
+          [description] = CASE WHEN @description IS NULL THEN [description] ELSE @description END,
+          [isActive] = CASE WHEN @hasIsActive = 1 THEN @isActive ELSE [isActive] END,
+          [updatedAt] = SYSUTCDATETIME()
+        WHERE [id] = @id;
+
+        SELECT [id], [name], [category], [description], [isActive], [createdAt], [createdBy], [updatedAt]
+        FROM lk_services
+        WHERE [id] = @id;
+      `)
+
+    if (!result.recordset.length) {
+      return res.status(404).json({ message: "Service not found" })
+    }
+
+    res.json(result.recordset[0])
+  } catch (error) {
+    res.status(500).json({ message: "Failed to update service", error: error.message })
+  }
+})
+
+router.delete("/services/:id", async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ message: "Invalid service id" })
+  }
+
+  try {
+    
+    const result = await pool
+      .request()
+      .input("id", sql.Int, id)
+      .query(`
+        DELETE FROM lk_services
+        WHERE [id] = @id;
+
+        SELECT @@ROWCOUNT AS affected;
+      `)
+
+    if (!result.recordset[0]?.affected) {
+      return res.status(404).json({ message: "Service not found" })
+    }
+
+    res.json({ success: true, id })
+  } catch (error) {
+    res.status(500).json({ message: "Failed to delete service", error: error.message })
+  }
+})
+
+router.get("/add-ons", async (_req, res) => {
+  try {
+    
+    const result = await pool.request().query(`
+      SELECT
+        [idx],
+        [id],
+        [name],
+        [price],
+        [requiresScheduling],
+        [description],
+        [isActive]
+      FROM lk_add_ons
+      ORDER BY [id] DESC;
+    `)
+
+    res.json(result.recordset)
+  } catch (error) {
+    res.status(500).json({ message: "Failed to load add-ons", error: error.message })
+  }
+})
+
+router.post("/add-ons", async (req, res) => {
+    const {
+        addOnId,
+        name,
+        price,
+        requiresScheduling,
+        description,
+        isActive
+    } = req.body || {};
+
+    if (!String(name || "").trim()) {
+        return res.status(400).json({ message: "Name is required." });
+    }
+
+    if (!String(addOnId || "").trim()) {
+        return res.status(400).json({ message: "Add-on ID is required." });
+    }
+
+    try {
+        const request = pool.request()
+            .input("addOnId", sql.NVarChar(100), String(addOnId).trim())
+            .input("name", sql.NVarChar(200), String(name).trim());
+
+        // Check whether the add-on ID or name already exists
+        const existing = await request.query(`
+            SELECT id, [name]
+            FROM lk_add_ons
+            WHERE id = @addOnId
+               OR [name] = @name;
+        `);
+
+        if (existing.recordset.length > 0) {
+            const duplicate = existing.recordset[0];
+
+            if (String(duplicate.id) === String(addOnId).trim()) {
+                return res.status(409).json({
+                    message: "An add-on with this ID already exists."
+                });
+            }
+
+            return res.status(409).json({
+                message: "An add-on with this name already exists."
+            });
+        }
+
+        const result = await pool.request()
+            .input("addOnId", sql.NVarChar(100), String(addOnId).trim())
+            .input("name", sql.NVarChar(200), String(name).trim())
+            .input("price", sql.Decimal(18, 2), toNumber(price, 0))
+            .input("requiresScheduling", sql.Bit, toBit(requiresScheduling, false))
+            .input("description", sql.NVarChar(sql.MAX), String(description || "").trim() || null)
+            .input("isActive", sql.Bit, toBit(isActive, true))
+            .query(`
+                INSERT INTO lk_add_ons
+                    (id, [name], [price], [requiresScheduling], [description], [isActive])
+                OUTPUT INSERTED.*
+                VALUES
+                    (@addOnId, @name, @price, @requiresScheduling, @description, @isActive);
+            `);
+
+        return res.status(201).json(result.recordset[0]);
+
+    } catch (error) {
+        console.error(error);
+
+        return res.status(500).json({
+            message: "Failed to create add-on.",
+            error: error.message
+        });
+    }
+});
+
+router.patch("/add-ons/:id", async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ message: "Invalid add-on id" })
+  }
+
+  const { name, price, requiresScheduling, description, isActive } = req.body || {}
+
+  try {
+    
+    const result = await pool
+      .request()
+      .input("idx", sql.Int, id)
+      .input("name", sql.NVarChar(200), String(name || "").trim() || null)
+      .input("hasPrice", sql.Bit, price === undefined ? 0 : 1)
+      .input("price", sql.Decimal(18, 2), toNumber(price, 0))
+      .input("hasRequiresScheduling", sql.Bit, requiresScheduling === undefined ? 0 : 1)
+      .input("requiresScheduling", sql.Bit, toBit(requiresScheduling, false))
+      .input("description", sql.NVarChar(sql.MAX), description === undefined ? null : (String(description || "").trim() || null))
+      .input("hasIsActive", sql.Bit, isActive === undefined ? 0 : 1)
+      .input("isActive", sql.Bit, toBit(isActive, true))
+      .query(`
+        UPDATE lk_add_ons
+        SET
+          [name] = COALESCE(@name, [name]),
+          [price] = CASE WHEN @hasPrice = 1 THEN @price ELSE [price] END,
+          [requiresScheduling] = CASE WHEN @hasRequiresScheduling = 1 THEN @requiresScheduling ELSE [requiresScheduling] END,
+          [description] = CASE WHEN @description IS NULL THEN [description] ELSE @description END,
+          [isActive] = CASE WHEN @hasIsActive = 1 THEN @isActive ELSE [isActive] END
+        WHERE [idx] = @idx;
+
+        SELECT [idx], [id], [name], [price], [requiresScheduling], [description], [isActive]
+        FROM lk_add_ons
+        WHERE [idx] = @idx;
+      `)
+
+    if (!result.recordset.length) {
+      return res.status(404).json({ message: "Add-on not found" })
+    }
+
+    res.json(result.recordset[0])
+  } catch (error) {
+    res.status(500).json({ message: "Failed to update add-on", error: error.message })
+  }
+})
+
+router.delete("/add-ons/:id", async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ message: "Invalid add-on id" })
+  }
+
+  try {
+    const pool = await getPool()
+    const result = await pool
+      .request()
+      .input("idx", sql.Int, id)
+      .query(`
+        DELETE FROM lk_add_ons
+        WHERE [idx] = @idx;
+
+        SELECT @@ROWCOUNT AS affected;
+      `)
+
+    if (!result.recordset[0]?.affected) {
+      return res.status(404).json({ message: "Add-on not found" })
+    }
+
+    res.json({ success: true, id })
+  } catch (error) {
+    res.status(500).json({ message: "Failed to delete add-on", error: error.message })
+  }
+})
+
 
 module.exports = router;

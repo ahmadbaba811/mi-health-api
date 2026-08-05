@@ -117,7 +117,6 @@ router.post('/register', async (req, res) => {
 });
 
 router.post('/login', async (req, res) => {
-
   const { labId, email, password, mode } = req.body;
   const isSuper = req.body.source === "super"
 
@@ -174,7 +173,6 @@ router.post('/login', async (req, res) => {
     }
 
     const admin = result.recordset[0];
-
     // Account disabled
     if (!admin.isActive) {
       return res.status(403).json({
@@ -231,7 +229,6 @@ router.post('/login', async (req, res) => {
                         WHERE ls.labId = @labId
                         ORDER BY s.createdAt DESC`);
     const labServices = adminLabServices.recordset
-
 
     return res.status(200).json({
       success: true,
