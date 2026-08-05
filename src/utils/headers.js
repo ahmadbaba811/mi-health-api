@@ -9,7 +9,8 @@ function configureSecurity(app) {
     ? [
         "https://mihealth.ng",
         "https://www.mihealth.ng",
-        "https://admin.mihealth.ng", // Remove if not used
+        "https://admin.mihealth.ng", // Remove if not used,
+        "http://localhost:5173",
       ]
     : [
         "http://localhost:5173",
