@@ -15,6 +15,8 @@ function configureSecurity(app) {
     : [
         "http://localhost:5173",
         "http://localhost:3000",
+        "https://mihealth.ng", // remove after testing
+        "https://www.mihealth.ng", // remove after testing
       ];
 
   app.use(
