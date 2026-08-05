@@ -56,6 +56,7 @@ function configureSecurity(app) {
   );
 
   app.use(express.json());
+  app.set('trust proxy', 1);
 }
 
 module.exports = configureSecurity;
