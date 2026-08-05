@@ -1,5 +1,5 @@
 function buildEmailHtml({html, now}) {
-    const logoUrl = 'https://via.placeholder.com/220x70.png?text=MiHealth';
+    const logoUrl = 'https://mihealth.ng/images/mihealthlogo-1-no-bg.png';
     const logoAlt = 'MiHealth logo';
     const year = new Date().getFullYear();
 
