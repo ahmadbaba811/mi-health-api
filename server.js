@@ -18,6 +18,8 @@ const adminDashboardRouter = require('./src/routes/lab-admin/dashboard');
 const testResultRouter = require('./src/routes/lab-admin/test-result');
 const superAdminRouter = require('./src/routes/super-admin/super-admin')
 const paymentRouter = require('./src/routes/payment')
+const slotAvailabilityRouter = require('./src/routes/lab-admin/slot-availability')
+
 
 
 const app = express();
@@ -43,6 +45,7 @@ app.use('/auth', authRouter);
 app.use('/admin-auth', adminAuthRouter);
 app.use('/dashboard', adminDashboardRouter);
 app.use('/admin/admin', superAdminRouter);
+app.use('/slots', slotAvailabilityRouter);
 app.use('/add-ons', addOnsRouter);
 app.use('/services', servicesRouter);
 app.use('/labs', labsRouter);
