@@ -279,7 +279,7 @@ async function isEmailRegistered(email) {
 
 // POST /register - Account creation endpoint
 router.post('/register', async (req, res) => {
-  const { email, password, confirmPassword, firstName, lastName, phone, address, orgName, accountType } = req.body;
+  const { email, password, confirmPassword, firstName, lastName, phone, address, orgName, accountType, birthYear } = req.body;
 
   const validationErrors = validateRegisterInput(email, password, confirmPassword);
   if (validationErrors.length > 0) {
@@ -302,6 +302,7 @@ router.post('/register', async (req, res) => {
     const request = pool.request();
     request.input('email', sql.VarChar(255), sanitizedEmail);
     request.input('passwordHash', sql.VarChar(512), passwordHash);
+    request.input('birthYear', sql.Numeric(), birthYear);
     request.input('isActive', sql.Bit, 1);
     request.input('firstName', sql.VarChar(255), firstName);
     request.input('lastName', sql.VarChar(255), lastName);
@@ -311,9 +312,9 @@ router.post('/register', async (req, res) => {
     request.input('accountType', sql.VarChar(255), accountType);
 
     await request.query(`
-      INSERT INTO Users(email, firstName, lastName, phone, passwordHash, isActive, createdAt, accountType ${accountType === "organisation" ? `, address, orgName` : ''})
+      INSERT INTO Users(email, firstName, lastName, birthYear, phone, passwordHash, isActive, createdAt, accountType ${accountType === "organisation" ? `, address, orgName` : ''})
       VALUES
-      (@email, @firstName, @lastName, @phone, @passwordHash, @isActive, SYSUTCDATETIME(), @accountType ${accountType === "organisation" ? `, @address, @orgName` : ''})
+      (@email, @firstName, @lastName, @birthYear, @phone, @passwordHash, @isActive, SYSUTCDATETIME(), @accountType ${accountType === "organisation" ? `, @address, @orgName, ` : ''})
   `);
 
     const fetchRequest = pool.request();

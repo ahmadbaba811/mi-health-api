@@ -18,10 +18,14 @@ function buildEmailHtml({html, now}) {
             <td align="center" style="padding:24px;">
               <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%; max-width:600px; background-color:#ffffff; border-radius:8px;">
                 <tr>
-                  <td style="background-color:#14213d; padding:28px 32px; text-align:center;">
-                    <img src="${logoUrl}" alt="${logoAlt}" width="180" style="max-width:180px; height:auto; display:block; margin:0 auto 10px;" />
-                    <div style="font-size:28px; font-weight:700; color:#ffffff; letter-spacing:0.5px;">MiHealth NG</div>
-                    <div style="margin-top:6px; font-size:14px; color:#cbd5e1;">Care that feels personal</div>
+                  <td style="background-color:#14213d; padding:12px 15px; text-align:center;">
+                      <div style="display:inline-flex; align-items:center; justify-content:center; background:#ffffff; border-radius:12px; padding:12px; margin:0 auto 12px;">
+                        <img src="${logoUrl}" alt="${logoAlt}" width="50" style="display:block; height:auto;" />
+                      </div>                    
+                      <div style="font-size:28px; font-weight:700; color:#ffffff; letter-spacing:0.5px;">MiHealth NG</div>
+                    <div style="margin-top:2px; font-size:14px; color:#cbd5e1; letter-spacing:1.3px;">
+                    <i>Connecting care, anytime...</i>
+                    </div>
                   </td>
                 </tr>
                 <tr>
