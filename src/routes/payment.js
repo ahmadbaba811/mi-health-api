@@ -71,7 +71,6 @@ router.post("/initialize", verifyToken, async (req, res) => {
         paystackReq.write(params);
         paystackReq.end();
     } catch (error) {
-        console.log(error)
         return res.status(500).json({
             success: false,
             message: "Failed to initialize payment",

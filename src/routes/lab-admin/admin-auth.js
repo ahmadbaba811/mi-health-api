@@ -141,7 +141,6 @@ router.post('/login', async (req, res) => {
         if (!labId) {
           return res.status(400).json({ error: 'labId is required in lab mode' });
         }
-        console.log('check lab', labId)
         let query = `
             SELECT a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
             FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
@@ -149,7 +148,7 @@ router.post('/login', async (req, res) => {
         `
         result = await request.query(query);
       } else {
-        console.log('check super')
+
         result = await request.query(`
             SELECT a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
             FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
@@ -182,7 +181,6 @@ router.post('/login', async (req, res) => {
 
     // Password verification
     if (!isSuper) {
-      console.log('check2')
       const passwordMatch = await bcrypt.compare(
         password,
         admin.passwordHash

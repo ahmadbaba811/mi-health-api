@@ -177,7 +177,6 @@ router.patch('/update', verifyAdmin, async (req, res) => {
         });
 
     } catch (err) {
-        console.log(err)
         console.error('Test result upload error:', err);
         return res.status(500).json({ error: 'Failed to upload test result document' });
     }

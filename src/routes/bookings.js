@@ -279,7 +279,6 @@ router.post('/confirm', verifyToken, async (req, res) => {
     }
 
     if (!gatewayProvider || !gatewayTransactionId || !gatewayReference) {
-        console.log('gatway problem')
         return res.status(400).json([{
             status: 400,
             error: 'gatewayProvider, gatewayTransactionId and gatewayReference are required.'
@@ -319,12 +318,10 @@ router.post('/confirm', verifyToken, async (req, res) => {
             const labAddOnDetails = Array.isArray(b.labAddOnDetails) ? b.labAddOnDetails : [];
 
             if (!labId || !totalPrice || !Array.isArray(services) || services.length === 0) {
-                console.log('service problem')
                 fail(400, 'Missing required booking fields.', labId);
             }
 
             if (totalPrice <= 0) {
-                console.log('price problem')
                 fail(400, 'totalPrice must be non-negative.', labId);
             }
 
@@ -391,7 +388,6 @@ router.post('/confirm', verifyToken, async (req, res) => {
             }
 
             if (confirmRow.resultCode === 5) {
-                console.log('here')
                 fail(410, 'This booking has already been processed.', labId);
             }
 
@@ -416,12 +412,10 @@ router.post('/confirm', verifyToken, async (req, res) => {
         const paymentRow = paymentResult.recordset?.[0];
         if (!paymentRow || paymentRow.resultCode !== 0) {
             if (paymentRow?.resultCode === 6) {
-                // console.log('here')
                 fail(400, 'Line items do not sum to the total charged.');
             }
 
             if (paymentRow?.resultCode === 7) {
-                // console.log('here2')
                 fail(400, 'One or more bookingIds are invalid.');
             }
 
@@ -430,7 +424,6 @@ router.post('/confirm', verifyToken, async (req, res) => {
 
         if (bookingFor === 'someone') {
             if (!customerDetails?.fullName || !customerDetails?.email || !customerDetails?.phone) {
-                // console.log('customer details problem')
                 fail(400, 'customerDetails.fullName, customerDetails.email and customerDetails.phone are required.');
             }
 

@@ -263,7 +263,6 @@ router.post('/lab-admins', verifyAdmin, async (req, res) => {
     if (transaction._aborted !== true) {
       await transaction.rollback();
     }
-    console.log(err)
     return res.status(500).json({ error: 'Failed to add admin' });
   }
 
@@ -302,7 +301,6 @@ router.patch('/lab-admins/:id', verifyAdmin, async (req, res) => {
     if (transaction._aborted !== true) {
       await transaction.rollback();
     }
-    console.log(err)
     return res.status(500).json({ error: 'Failed to update admin' });
   }
 
@@ -387,7 +385,6 @@ router.get('/onboarding/:labId', verifyAdmin, async (req, res) => {
 
     res.json(labs);
   } catch (err) {
-    console.log(err)
     res.status(500).json({ message: err.message });
   }
 });
@@ -587,7 +584,6 @@ router.get("/services", async (_req, res) => {
 
     res.json(result.recordset)
   } catch (error) {
-    console.log(error)
     res.status(500).json({ message: "Failed to load services", error: error.message })
   }
 })
