@@ -1,7 +1,39 @@
 const express = require('express');
 const router = express.Router();
 const { pool, sql } = require('../db');
-const { verifyAdmin  } = require('../middleware/auth');
+const { verifyAdmin, verifyToken  } = require('../middleware/auth');
+
+
+// get equipment
+router.get('/', verifyToken, async (req, res) => {
+    try {
+        const result = await pool.request()
+            .query(`
+                SELECT  e.id,
+                    e.labId, 
+                    l.name as labName,
+                    e.equipmentName AS name,
+                    e.equipmentType AS category,
+                    e.model,
+                    e.serialNumber,
+                    e.lastCalibrated,
+                    e.nextServiceDue,
+                    e.notes,
+                    e.currentStatusId
+                FROM equipment e INNER JOIN labs l ON e.labId = l.id
+                WHERE e.isArchived = 0
+                ORDER BY e.createdAt DESC
+            `);
+
+        return res.json(result.recordset)
+
+    } catch (err) {
+        console.error('Equipment fetch error:', err);
+        return res.status(500).json({
+            error: 'Failed to fetch equipment'
+        });
+    }
+});
 
 
 // get equipment
