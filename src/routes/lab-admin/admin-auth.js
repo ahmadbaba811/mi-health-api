@@ -147,7 +147,7 @@ router.post('/login', async (req, res) => {
         let query = `
             SELECT TOP 1 a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
             FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
-            WHERE a.labId = @labId AND a.IsActive = @IsActive AND isSuper IS NULL
+            WHERE a.labId = @labId 
         `
         result = await request.query(query);
       } else {
@@ -164,7 +164,7 @@ router.post('/login', async (req, res) => {
       result = await request.query(`
             SELECT a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
             FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
-            WHERE a.email = @email
+            WHERE a.email = @email AND a.IsActive = @IsActive AND isSuper IS NULL
         `);
     }
 
