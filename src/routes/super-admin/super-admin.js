@@ -368,7 +368,7 @@ router.get('/onboarding/:labId', verifyAdmin, async (req, res) => {
     `);
 
     let lab_admins = await request.query(`
-      SELECT id, labId, firstName, lastName, email, phone, role, isActive, createdAt FROM lab_admins WHERE labId = @labId
+      SELECT id, labId, firstName, lastName, email, phone, role, isActive, createdAt FROM lab_admins WHERE labId = @labId AND isSuper = 0
     `);
 
     labs = labs.recordset
