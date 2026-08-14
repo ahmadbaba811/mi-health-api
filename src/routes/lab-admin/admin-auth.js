@@ -135,24 +135,29 @@ router.post('/login', async (req, res) => {
 
     request.input('email', sql.VarChar(255), sanitizedEmail);
     request.input('labId', sql.Int, labId ?? null);
+
+
     let result
     if (isSuper) {
       if (mode === "lab") {
         if (!labId) {
           return res.status(400).json({ error: 'labId is required in lab mode' });
         }
+        request.input('IsActive', sql.Bit, 1);
         let query = `
-            SELECT a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
+            SELECT TOP 1 a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
             FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
-            WHERE a.labId = @labId
+            WHERE a.labId = @labId AND a.IsActive = @IsActive AND isSuper IS NULL
         `
         result = await request.query(query);
       } else {
 
+        request.input('IsActive', sql.Bit, 1);
+        request.input('isSuper', sql.Bit, 1);
         result = await request.query(`
             SELECT TOP 1 a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
             FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
-            WHERE a.email = @email AND isSuper = 1 ORDER BY isSuper ASC
+            WHERE a.email = @email AND a.IsActive = @IsActive AND isSuper = @isSuper ORDER BY isSuper ASC
         `);
       }
     } else {
@@ -165,7 +170,7 @@ router.post('/login', async (req, res) => {
 
     // Admin not found
     if (result.recordset.length === 0) {
-      
+
       return res.status(401).json({
         error: 'Invalid credentials'
       });
