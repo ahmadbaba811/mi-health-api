@@ -161,8 +161,9 @@ router.post('/login', async (req, res) => {
         `);
       }
     } else {
+      request.input('IsActive', sql.Bit, 1);
       result = await request.query(`
-            SELECT a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
+            SELECT TOP 1 a.id, labId, firstName, lastName, a.email, passwordHash, a.isActive, failedLoginCount, b.name
             FROM lab_admins a INNER JOIN labs b ON a.labId = b.id
             WHERE a.email = @email AND a.IsActive = @IsActive AND isSuper IS NULL
         `);
