@@ -5,9 +5,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { pool, sql } = require('../db');
-const { verifyToken } = require('../middleware/auth');
-const { sendEmail } = require('../utils/email');
-const { contentSecurityPolicy } = require('helmet');
+const { findOrCreateOAuthUser, isEmailRegistered, completeOAuthSignIn, verifyGoogleIdToken, logSuccessfulLogin, signAppToken, verifyMicrosoftIdToken } = require('../utils/oAuth');
 
 
 // Rate limiting: 5 failed login attempts per 15 minutes per IP
@@ -19,8 +17,8 @@ const loginLimiter = rateLimit({
   legacyHeaders: false, // Disable `X-RateLimit-*` headers
   skipSuccessfulRequests: true,
   skip: (req) => {
-    // Skip rate limiting for health checks or non-login endpoints
-    return req.path !== '/login';
+    // Skip rate limiting for non-login endpoints
+    return req.path !== '/login' && req.path !== '/google';
   }
 });
 
@@ -69,6 +67,39 @@ function isValidEmail(email) {
   return emailRegex.test(email);
 }
 
+// Phone validation helper: allows optional leading +, 7-15 digits total
+function isValidPhone(phone) {
+  const phoneRegex = /^\+?[0-9]{7,15}$/;
+  return phoneRegex.test(phone);
+}
+
+// Password strength checker: min 8 chars, upper/lowercase, number, special char
+function checkPasswordStrength(password) {
+  const errors = [];
+
+  if (!password || typeof password !== 'string') {
+    return ['Password is required'];
+  }
+
+  if (password.length < 8) {
+    errors.push('Password must be at least 8 characters');
+  }
+  if (!/[a-z]/.test(password)) {
+    errors.push('Password must contain at least one lowercase letter');
+  }
+  if (!/[A-Z]/.test(password)) {
+    errors.push('Password must contain at least one uppercase letter');
+  }
+  if (!/[0-9]/.test(password)) {
+    errors.push('Password must contain at least one number');
+  }
+  if (!/[^A-Za-z0-9]/.test(password)) {
+    errors.push('Password must contain at least one special character');
+  }
+
+  return errors;
+}
+
 // Log failed login attempts
 async function logFailedLogin(email, reason) {
   try {
@@ -86,22 +117,6 @@ async function logFailedLogin(email, reason) {
   }
 }
 
-// Log successful login
-async function logSuccessfulLogin(userId, email) {
-  try {
-    const request = pool.request();
-    request.input('userId', sql.Int, userId);
-    request.input('email', sql.VarChar(255), email);
-    request.input('timestamp', sql.DateTime, new Date());
-
-    await request.query(`
-      INSERT INTO login_attempts (userId, success, timestamp, email)
-      VALUES (@userId, 1, @timestamp, @email)
-    `);
-  } catch (err) {
-    console.error('Error logging successful login:', err);
-  }
-}
 
 // Check account lockout (failed attempts)
 async function isAccountLocked(email) {
@@ -201,18 +216,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     }
 
     // Generate JWT token
-    const token = jwt.sign(
-      {
-        userId: user.id,
-        email: user.email
-      },
-      process.env.JWT_SECRET || 'your-secret-key',
-      {
-        expiresIn: '24h',
-        issuer: 'mi-health-api',
-        audience: 'mi-health-client'
-      }
-    );
+    const token = await signAppToken(user);
 
     // Log successful login
     await logSuccessfulLogin(user.id, email);
@@ -243,7 +247,67 @@ router.post('/login', loginLimiter, async (req, res) => {
   }
 });
 
-function validateRegisterInput(email, password, confirmPassword) {
+
+// oAuth Login with google
+router.post("/google", loginLimiter, async (req, res) => {
+  const { token } = req.body || {}
+  if (!token) {
+    return res.status(400).json({ error: 'Invalid input', details: ['Missing Google token'] })
+  }
+
+  try {
+    const profile = await verifyGoogleIdToken(token)
+    await completeOAuthSignIn(res, profile)
+  } catch (error) {
+    // console.log(error)
+    console.error("Google sign-in failed:", error.message)
+    res.status(401).json({ error: 'Google sign in failed' })
+  }
+})
+
+
+// oAuth Login with microsoft
+router.post("/microsoft", async (req, res) => {
+  const { token } = req.body || {}
+  if (!token) {
+    return res.status(400).json({ error: 'Invalid input', details: ['Missing Microsoft token'] })
+  }
+
+  try {
+    const profile = await verifyMicrosoftIdToken(token)
+    console.log(profile)
+    await completeOAuthSignIn(res, profile)
+  } catch (error) {
+    console.error("Microsoft sign-in failed:", error.message)
+    res.status(401).json({ error: 'Microsoft sign in failed' })
+  }
+})
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function validateRegisterInput(email, password, confirmPassword, phone) {
   const errors = validateLoginInput(email, password);
 
   if (!confirmPassword || typeof confirmPassword !== 'string') {
@@ -252,36 +316,24 @@ function validateRegisterInput(email, password, confirmPassword) {
     errors.push('Passwords do not match');
   }
 
-  if (password && password.length > 0 && password.length < 8) {
-    errors.push('Password must be at least 8 characters');
+  if (password && password.length > 0) {
+    errors.push(...checkPasswordStrength(password));
+  }
+
+  if (!isValidPhone(phone.trim())) {
+    errors.push('Invalid phone number format');
   }
 
   return errors;
 }
 
-async function isEmailRegistered(email) {
-  try {
-    const request = pool.request();
-    request.input('email', sql.VarChar(255), email);
 
-    const result = await request.query(`
-      SELECT COUNT(1) AS existingCount
-      FROM Users
-      WHERE email = @email
-    `);
-
-    return result.recordset[0].existingCount > 0;
-  } catch (err) {
-    console.error('Error checking email existence:', err);
-    return false;
-  }
-}
 
 // POST /register - Account creation endpoint
 router.post('/register', async (req, res) => {
   const { email, password, confirmPassword, firstName, lastName, phone, address, orgName, accountType, birthYear } = req.body;
 
-  const validationErrors = validateRegisterInput(email, password, confirmPassword);
+  const validationErrors = validateRegisterInput(email, password, confirmPassword, phone);
   if (validationErrors.length > 0) {
     return res.status(400).json({
       error: 'Invalid registration data',

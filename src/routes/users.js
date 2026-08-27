@@ -45,7 +45,7 @@ router.get('/:id', verifyToken, async (req, res) => {
 
 // PUT /users/:id - update user
 router.put('/:id', verifyToken, async (req, res) => {
-  
+
   const id = req.params.id;
   const tokenUserId = req.user?.userId;
 
@@ -117,11 +117,12 @@ router.post('/verify-email', async (req, res) => {
   try {
     const request = pool.request();
     request.input('email', sql.VarChar(255), email);
-    const result = await request.query('SELECT * FROM [Users] WHERE email = @email ');
+    const result = await request.query('SELECT id, email, firstName, emailVerified FROM [Users] WHERE email = @email ');
     const user = result.recordset[0]
+
     if (user && user.emailVerified === null) {
       await request.query(`UPDATE users SET emailVerified = 'verified' WHERE email=@email`)
-      return res.status(200).json({ verified: true })
+      return res.status(200).json({ verified: true, email: email, firstName: user.firstName })
     }
 
     if (user && user.emailVerified === 'verified') {
@@ -130,6 +131,7 @@ router.post('/verify-email', async (req, res) => {
 
     if (!user) return res.status(404).json({ error: 'User not found' });
   } catch (err) {
+    console.log(err)
     res.status(500).json({ error: 'Failed to fetch user' });
   }
 });

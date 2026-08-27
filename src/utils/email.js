@@ -39,6 +39,12 @@ async function sendEmail({ to, subject, html, bcc }) {
         subject,
         html,
         bcc
+        // attachments: [
+        //     {
+        //         filename: 'document.pdf',           // Name the file will have in the email
+        //         path: path.join(__dirname, 'document.pdf') // Local file path on your machine
+        //     }
+        // ]
     }
 
     await transporter.sendMail(mailOptions);
