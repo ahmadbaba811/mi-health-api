@@ -698,7 +698,7 @@ router.get("/add-ons", async (_req, res) => {
         [price],
         [requiresScheduling],
         [description],
-        [isActive]
+        [isActive], IsLabAddable
       FROM lk_add_ons
       ORDER BY [id] DESC;
     `)

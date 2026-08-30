@@ -12,7 +12,7 @@ router.post('/', verifyAdmin, upload.single('document'), async (req, res) => {
 
     const { bookingId } = req.body;
     const file = req.file;
-    
+
     if (!bookingId) {
         return res.status(400).json({ error: 'bookingId is required' });
     }
@@ -43,7 +43,7 @@ router.post('/', verifyAdmin, upload.single('document'), async (req, res) => {
         }
 
         // 2. CHECK IF RESULTS ALREADY UPLOADED FOR THIS BOOKING
-       const existingResultCheck = await new sql.Request(transaction)
+        const existingResultCheck = await new sql.Request(transaction)
             .input('bookingId', sql.Int, bookingId)
             .query(`
                 SELECT 1
@@ -56,7 +56,6 @@ router.post('/', verifyAdmin, upload.single('document'), async (req, res) => {
             return res.status(409).json({ error: 'Results already uploaded for this booking' });
         }
 
-        // 3. INSERT THE FILE RECORD INTO THE NEW SIMPLIFIED test_results TABLE
         const fileUrl = file.location || `/uploads/${file.filename}`; // Handles both S3 and local
 
         const testResult = await new sql.Request(transaction)
@@ -98,7 +97,8 @@ router.post('/', verifyAdmin, upload.single('document'), async (req, res) => {
             data: {
                 testResultId,
                 fileUrl,
-                bookingId
+                bookingId,
+                attachment: { url: fileUrl, filename: file.originalname }
             }
         });
 

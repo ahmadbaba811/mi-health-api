@@ -1,5 +1,6 @@
 const nodemailer = require('nodemailer');
 require("dotenv").config();
+const path = require('path');
 
 function isEmailConfigured() {
     return Boolean(
@@ -26,7 +27,17 @@ function createTransport() {
     })
 }
 
-async function sendEmail({ to, subject, html, bcc }) {
+
+const attachmentPath = (attachmentLink) => {
+    return path.join(
+        __dirname,
+        "../../",
+        attachmentLink.replace(/^[/\\]+/, "")
+    )
+}
+
+
+async function sendEmail({ to, subject, html, bcc, attachment = null }) {
     if (!to || !subject) {
         throw new Error('Missing required email fields: to, subject are required.');
     }
@@ -38,13 +49,15 @@ async function sendEmail({ to, subject, html, bcc }) {
         to,
         subject,
         html,
-        bcc
-        // attachments: [
-        //     {
-        //         filename: 'document.pdf',           // Name the file will have in the email
-        //         path: path.join(__dirname, 'document.pdf') // Local file path on your machine
-        //     }
-        // ]
+        bcc,
+        ...(attachment && {
+            attachments: [
+                {
+                    filename: attachment.bookingRef+"_"+attachment.filename,           // Name the file will have in the email
+                    path: attachmentPath(attachment.url) // Local file path on your machine
+                }
+            ]
+        })
     }
 
     await transporter.sendMail(mailOptions);

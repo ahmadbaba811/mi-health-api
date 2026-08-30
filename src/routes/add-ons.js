@@ -28,14 +28,74 @@ router.post('/labs', verifyToken, async (req, res) => {
     const request = pool.request();
     request.input('labIds', sql.VarChar(50), JSON.stringify(labIds));
 
+    //   const result = await request.query(`
+    //  SELECT CAST(a.id AS VARCHAR(20)) AS idx, CAST(a.addOnId AS VARCHAR(20)) AS id, a.labId,  a.name, a.price, b.requiresScheduling, a.description, a.isActive 
+    //   FROM lab_add_ons a inner join lk_add_ons b ON a.addOnId = b.id WHERE a.isActive = 1 AND a.labId IN  
+    //   (
+    //     SELECT CAST(value AS INT)
+    //     FROM OPENJSON(@labIds)
+    //   )
+    //   ORDER BY a.price ASC
+    //   `);
+
+
+    // ` SELECT CAST(a.id AS VARCHAR(20)) AS idx, CAST(a.addOnId AS VARCHAR(20)) AS id, a.labId,  a.name, a.price, b.requiresScheduling, a.description, a.isActive, 1 as isLabAddable
+    // FROM lab_add_ons a inner join lk_add_ons b ON a.addOnId = b.id WHERE a.isActive = 1 AND a.labId IN  
+    // (
+    //   SELECT CAST(value AS INT)
+    //   FROM OPENJSON(@labIds)
+    // )
+    //     UNION 
+    //  SELECT 0 as idx, CAST(id AS VARCHAR(20)) AS id, 0 as labId, name, price, requiresScheduling, description,  isActive, isLabAddable FROM lk_add_ons WHERE isLabAddable = 0
+    // ORDER BY a.price ASC`
+
+
+
     const result = await request.query(`
-   SELECT CAST(a.id AS VARCHAR(20)) AS idx, CAST(a.addOnId AS VARCHAR(20)) AS id, a.labId,  a.name, a.price, b.requiresScheduling, a.description, a.isActive 
-    FROM lab_add_ons a inner join lk_add_ons b ON a.addOnId = b.id WHERE a.isActive = 1 AND a.labId IN  
-    (
+   
+    SELECT 
+    CAST(a.id AS VARCHAR(20)) AS idx,
+    CAST(a.addOnId AS VARCHAR(20)) AS id,
+    a.labId,
+    a.name,
+    a.price,
+    b.requiresScheduling,
+    a.description,
+    a.isActive,
+    1 AS isLabAddable
+FROM lab_add_ons a
+INNER JOIN lk_add_ons b 
+    ON a.addOnId = b.id
+WHERE a.isActive = 1
+  AND a.labId IN (
       SELECT CAST(value AS INT)
       FROM OPENJSON(@labIds)
     )
-    ORDER BY a.price ASC
+
+UNION
+
+SELECT 
+    '0' AS idx,
+    CAST(b.id AS VARCHAR(20)) AS id,
+    labs.labId,
+    b.name,
+    b.price,
+    b.requiresScheduling,
+    b.description,
+    b.isActive,
+    b.isLabAddable
+FROM lk_add_ons b
+CROSS JOIN (
+    SELECT DISTINCT labId
+    FROM lab_add_ons
+    WHERE labId IN (
+      SELECT CAST(value AS INT)
+      FROM OPENJSON(@labIds)
+    )
+) labs
+WHERE b.isLabAddable = 0
+
+ORDER BY price ASC;
     `);
 
     res.json(result.recordset);
@@ -47,7 +107,7 @@ router.post('/labs', verifyToken, async (req, res) => {
 
 // POST create new add-on
 router.post("/", verifyAdmin, async (req, res) => {
- 
+
   const { addOnId, name, price, description, isActive } = req.body;
 
   if (!addOnId || !name || price === undefined) {

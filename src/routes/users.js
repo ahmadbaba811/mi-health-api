@@ -139,6 +139,7 @@ router.post('/verify-email', async (req, res) => {
 router.post('/send-email', async (req, res) => {
   try {
     const { to, subject } = req.body;
+
     if (!to) {
       return res.status(400).json({ error: 'Recipient email is required' });
     }
@@ -146,11 +147,13 @@ router.post('/send-email', async (req, res) => {
     const now = new Date().getFullYear();
     const html = buildEmailHtml({ html: req.body.html, now: now });
     const bcc = !req.body.bcc ? null : req.body.bcc;
+    const attachment = !req.body.attachment ? null : req.body.attachment;
     const info = await sendEmail({
       to: to,
       bcc: bcc,
       subject: subject,
-      html: html
+      html: html,
+      attachment
     });
 
     res.status(200).json({
