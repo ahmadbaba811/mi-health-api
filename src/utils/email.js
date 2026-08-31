@@ -1,6 +1,7 @@
 const nodemailer = require('nodemailer');
 require("dotenv").config();
 const path = require('path');
+const fs = require('fs');
 
 function isEmailConfigured() {
     return Boolean(
@@ -53,7 +54,7 @@ async function sendEmail({ to, subject, html, bcc, attachment = null }) {
         ...(attachment && {
             attachments: [
                 {
-                    filename: attachment.bookingRef+"_"+attachment.filename,           // Name the file will have in the email
+                    filename: attachment.bookingRef + "_" + attachment.filename,           // Name the file will have in the email
                     path: attachmentPath(attachment.url) // Local file path on your machine
                 }
             ]
@@ -61,6 +62,18 @@ async function sendEmail({ to, subject, html, bcc, attachment = null }) {
     }
 
     await transporter.sendMail(mailOptions);
+
+    // Delete attachment after successful email
+    if (attachment) {
+        const filePath = attachmentPath(attachment.url)
+
+        try {
+            await fs.promises.unlink(filePath)
+            
+        } catch (error) {
+            console.error("Could not delete attachment:", error)
+        }
+    }
 }
 
 module.exports = { sendEmail };

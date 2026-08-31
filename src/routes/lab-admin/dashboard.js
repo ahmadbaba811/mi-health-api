@@ -237,7 +237,7 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
 
         const result = await pool.request()
             .input('labId', sql.Int, labId)
-            .query(`SELECT id, id as bookingId, userId, ref, labId, totalPrice as total, status, isWalkIn, date, time, homeAddress, postCode, addOns, createdAt from bookings WHERE labId = @labId ORDER BY createdAt DESC`)
+            .query(`SELECT id, id as bookingId, userId, ref, labId, totalPrice as total, labAddOnCost, nonLabAddOnCost, status, isWalkIn, date, time, homeAddress, postCode, addOns, createdAt from bookings WHERE labId = @labId ORDER BY createdAt DESC`)
 
 
         const bookings = result.recordset;
@@ -245,7 +245,7 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
         for (const booking of bookings) {
             const bookedServicesResult = await pool.request()
                 .input('bookingId', sql.Int, booking.bookingId)
-                .query(`SELECT DISTINCT bs.id, bs.bookingId, bs.price, bs.status, s.name, bs.labServiceId, s.category FROM booking_services bs inner join lab_services ls on bs.labServiceId = ls.serviceId inner join lk_services s ON s.id = ls.serviceId WHERE bookingId = @bookingId`)
+                .query(`SELECT DISTINCT bs.id, bs.bookingId, bs.price, bs.status, s.name, bs.labServiceId, s.category FROM booking_services bs inner join lab_services ls on bs.labServiceId = ls.serviceId inner join lk_services s ON s.id = ls.serviceId WHERE bookingId = @bookingId `)
 
             const bookedServices = bookedServicesResult.recordset
             booking.services = bookedServices ?? []
@@ -258,13 +258,17 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
             if (booking.addOns !== "") {
                 const addOnsResult = await pool.request()
                     .input('labId', sql.Int, labId)
-                    .query(`select * from (
-                                        SELECT addOnId, name, description, price, 1 as isLabAddable FROM lab_add_ons WHERE labId = @labId
-                                        UNION
-                                        SELECT id as addonId, name, description, price, isLabAddable FROM lk_add_ons WHERE isLabAddable = 0
-                                    ) as addOns
-                                        WHERE addonId IN (${booking.addOns})`
+                    .query(`SELECT addOnId, name, description, price, 1 as isLabAddable FROM lab_add_ons WHERE labId = @labId
+                                        AND addonId IN (${booking.addOns})`
                     );
+
+                    // .query(`select * from (
+                    //                     SELECT addOnId, name, description, price, 1 as isLabAddable FROM lab_add_ons WHERE labId = @labId
+                    //                     UNION
+                    //                     SELECT id as addonId, name, description, price, isLabAddable FROM lk_add_ons WHERE isLabAddable = 0
+                    //                 ) as addOns
+                    //                     WHERE addonId IN (${booking.addOns})`
+                    // );
                 booking.addOnsList = addOnsResult.recordset
             }
         }

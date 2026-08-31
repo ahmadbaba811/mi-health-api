@@ -155,10 +155,10 @@ router.post('/send-email', async (req, res) => {
       html: html,
       attachment
     });
-
+    
     res.status(200).json({
       success: true,
-      message: 'Welcome email sent successfully'
+      message: 'email sent successfully'
     });
   } catch (error) {
     console.error('Failed to send welcome email:', error);

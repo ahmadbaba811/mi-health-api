@@ -710,13 +710,15 @@ router.get("/add-ons", async (_req, res) => {
 })
 
 router.post("/add-ons", async (req, res) => {
+  
     const {
         addOnId,
         name,
         price,
         requiresScheduling,
         description,
-        isActive
+        isActive,
+        isLabAddable
     } = req.body || {};
 
     if (!String(name || "").trim()) {
@@ -761,12 +763,13 @@ router.post("/add-ons", async (req, res) => {
             .input("requiresScheduling", sql.Bit, toBit(requiresScheduling, false))
             .input("description", sql.NVarChar(sql.MAX), String(description || "").trim() || null)
             .input("isActive", sql.Bit, toBit(isActive, true))
+            .input("isLabAddable", sql.Bit, toBit(isLabAddable, false) )
             .query(`
                 INSERT INTO lk_add_ons
-                    (id, [name], [price], [requiresScheduling], [description], [isActive])
+                    (id, [name], [price], [requiresScheduling], [description], [isActive], [isLabAddable])
                 OUTPUT INSERTED.*
                 VALUES
-                    (@addOnId, @name, @price, @requiresScheduling, @description, @isActive);
+                    (@addOnId, @name, @price, @requiresScheduling, @description, @isActive, @isLabAddable);
             `);
 
         return res.status(201).json(result.recordset[0]);

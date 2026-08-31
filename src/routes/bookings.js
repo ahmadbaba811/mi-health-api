@@ -25,7 +25,7 @@ async function getFullBooking({ bookingId, userId }) {
     bookingRequest.input('userId', sql.Int, userId || null);
 
     const bookingResult = await bookingRequest.query(`
-       SELECT id, id as bookingId, userId, ref, labId, totalPrice as total, status, isWalkIn, date, time, homeAddress, postCode, addOns, createdAt from bookings
+       SELECT id, id as bookingId, userId, ref, labId, totalPrice as total, labAddOnCost, nonLabAddOnCost, status, isWalkIn, date, time, homeAddress, postCode, addOns, createdAt from bookings
        WHERE ${bookingId ? 'id = @id' : 'userId = @userId'} ORDER BY createdAt DESC
     `);
 
@@ -96,6 +96,11 @@ async function getFullBooking({ bookingId, userId }) {
         `);
 
         booking.services = servicesResult.recordset;
+
+        const testResult = await pool.request()
+            .input('bookingId', sql.Int, booking.bookingId || null)
+            .query(`SELECT * FROM test_results WHERE bookingId = @bookingId`);
+        booking.testResult = testResult.recordset
     }
 
     return bookings;
@@ -315,6 +320,8 @@ router.post('/confirm', verifyToken, async (req, res) => {
             const postCode = b.postCode ?? null;
             const totalPrice = b.total;
             const labServiceTotal = b.labServiceTotal;
+            const labAddOnCost = b.labAddOnCost;
+            const nonLabAddOnCost = b.nonLabAddOnCost;
             const labAddOnDetails = Array.isArray(b.labAddOnDetails) ? b.labAddOnDetails : [];
 
             if (!labId || !totalPrice || !Array.isArray(services) || services.length === 0) {
@@ -330,7 +337,9 @@ router.post('/confirm', verifyToken, async (req, res) => {
                 .input('userId', sql.Int, userId)
                 .input('ref', sql.NVarChar(50), ref ?? null)
                 .input('walkInLabId', sql.Int, labId)
-                .input('totalPrice', sql.Numeric(12, 2), totalPrice)
+                .input('totalPrice', sql.Numeric(12, 2), labServiceTotal)
+                .input('labAddOnCost', sql.Numeric(12, 2), labAddOnCost)
+                .input('nonLabAddOnCost', sql.Numeric(12, 2), nonLabAddOnCost)
                 .input('isWalkIn', sql.Bit, isWalkIn ? 1 : 0)
                 .input('homeAddress', sql.NVarChar(sql.MAX), homeAddress)
                 .input('postCode', sql.NVarChar(50), postCode)
@@ -358,7 +367,7 @@ router.post('/confirm', verifyToken, async (req, res) => {
                 });
 
                 if (labAddOnDetails.length > 0) {
-                    const addOnItems = labAddOnDetails.map(x => ({
+                    const labAddOnItems = labAddOnDetails.filter(j => j.isLabAddable === 1).map(x => ({
                         bookingId: confirmRow.bookingId,
                         labId,
                         amount: x.price,
@@ -366,7 +375,17 @@ router.post('/confirm', verifyToken, async (req, res) => {
                         description: `Add-On fee for ${b.lab?.name || 'lab'}`,
                         addOnId: x.id
                     }));
-                    lineItems.push(...addOnItems);
+                    lineItems.push(...labAddOnItems);
+
+                    const nonLabAddOnItems = labAddOnDetails.filter(j => j.isLabAddable === 0).map(x => ({
+                        bookingId: confirmRow.bookingId,
+                        labId,
+                        amount: x.price,
+                        type: 'non_lab_add_on',
+                        description: `Add-On fee for ${b.lab?.name || 'lab'}`,
+                        addOnId: x.id
+                    }));
+                    lineItems.push(...nonLabAddOnItems);
                 }
 
                 resultsArray.push({
@@ -408,7 +427,7 @@ router.post('/confirm', verifyToken, async (req, res) => {
             .input('createdBy', sql.NVarChar(255), String(userId))
             .input('lineItems', sql.NVarChar(sql.MAX), JSON.stringify(lineItems))
             .execute('usp_record_payment');
-        
+
         const paymentRow = paymentResult.recordset?.[0];
         if (!paymentRow || paymentRow.resultCode !== 0) {
             if (paymentRow?.resultCode === 6) {
