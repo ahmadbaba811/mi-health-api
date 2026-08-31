@@ -7,6 +7,68 @@ const https = require('https')
 
 const HOLD_MINUTES = 10;
 
+function getPaystackSecretKey() {
+    const secretKey = process.env.NODE_ENV === 'dev'
+        ? process.env.PAYSTACK_SECRET_KEY_TEST
+        : process.env.PAYSTACK_SECRET_KEY_LIVE;
+
+    if (!secretKey) {
+        const error = new Error('Payment verification is not configured.');
+        error.status = 500;
+        throw error;
+    }
+
+    return secretKey;
+}
+
+function verifyPaystackTransaction(reference) {
+    return new Promise((resolve, reject) => {
+        const options = {
+            hostname: 'api.paystack.co',
+            port: 443,
+            path: `/transaction/verify/${encodeURIComponent(reference)}`,
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${getPaystackSecretKey()}`,
+            },
+        };
+
+        const paystackRequest = https.request(options, (paystackResponse) => {
+            let responseBody = '';
+
+            paystackResponse.on('data', (chunk) => {
+                responseBody += chunk;
+            });
+
+            paystackResponse.on('end', () => {
+                try {
+                    const result = JSON.parse(responseBody);
+
+                    if (paystackResponse.statusCode < 200 || paystackResponse.statusCode >= 300 || !result.status || !result.data) {
+                        const error = new Error('Unable to verify payment with Paystack.');
+                        error.status = 400;
+                        return reject(error);
+                    }
+
+                    return resolve(result.data);
+                } catch (error) {
+                    error.message = 'Invalid response from payment provider.';
+                    error.status = 502;
+                    return reject(error);
+                }
+            });
+        });
+
+        paystackRequest.on('error', () => {
+            const error = new Error('Unable to verify payment with Paystack.');
+            error.status = 502;
+            reject(error);
+        });
+
+        paystackRequest.end();
+    });
+}
+
 // Result codes returned by stored procedures
 const RESULT = {
     SUCCESS: 0,
@@ -258,14 +320,13 @@ router.post('/confirm', verifyToken, async (req, res) => {
     const bookings = Array.isArray(req.body.data) ? req.body.data : [];
     const {
         subTotal,
+        grandTotal,
         bookingFor,
         customerDetails,
         serviceFee,
         vat,
         gatewayProvider,
-        gatewayTransactionId,
         gatewayReference,
-        gatewayMessage
     } = req.body;
     const userId = req.user?.userId
 
@@ -283,10 +344,10 @@ router.post('/confirm', verifyToken, async (req, res) => {
         }]);
     }
 
-    if (!gatewayProvider || !gatewayTransactionId || !gatewayReference) {
+    if (gatewayProvider !== 'paystack' || !gatewayReference) {
         return res.status(400).json([{
             status: 400,
-            error: 'gatewayProvider, gatewayTransactionId and gatewayReference are required.'
+            error: 'gatewayProvider must be paystack and gatewayReference is required.'
         }]);
     }
 
@@ -294,7 +355,15 @@ router.post('/confirm', verifyToken, async (req, res) => {
     const lineItems = [];
     const firstBooking = bookings[0] || {};
     const bookingRef = firstBooking.ref ?? null;
-    const paymentSubTotal = subTotal;
+    const paymentSubTotal = Number(subTotal);
+    const paymentGrandTotal = Number(grandTotal);
+
+    if (!Number.isFinite(paymentGrandTotal) || paymentGrandTotal <= 0) {
+        return res.status(400).json([{
+            status: 400,
+            error: 'subTotal must be a positive number.'
+        }]);
+    }
 
     const fail = (status, error, labId = null) => {
         const err = new Error(error);
@@ -307,6 +376,23 @@ router.post('/confirm', verifyToken, async (req, res) => {
     let txBegun = false;
 
     try {
+        const verifiedPayment = await verifyPaystackTransaction(gatewayReference);
+        const expectedAmountInKobo = Math.round(paymentGrandTotal * 100);
+        const paymentMetadata = verifiedPayment.metadata || {};
+
+        if (
+            verifiedPayment.status !== 'success' ||
+            verifiedPayment.reference !== gatewayReference ||
+            verifiedPayment.currency !== 'NGN' ||
+            verifiedPayment.requested_amount !== expectedAmountInKobo ||
+            String(paymentMetadata.userId) !== String(userId)
+        ) {
+            return res.status(400).json([{
+                status: 400,
+                error: 'Payment does not match this booking.'
+            }]);
+        }
+
         await transaction.begin();
         txBegun = true;
 
@@ -347,7 +433,7 @@ router.post('/confirm', verifyToken, async (req, res) => {
                 .input('createdBy', sql.NVarChar(255), String(userId))
                 .input('services', sql.NVarChar(sql.MAX), JSON.stringify(services))
                 .input('gatewayReference', sql.NVarChar(50), gatewayReference)
-                .input('gatewayTransactionId', sql.NVarChar(255), gatewayTransactionId)
+                .input('gatewayTransactionId', sql.NVarChar(255), String(verifiedPayment.id))
                 .execute('usp_confirm_booking');
 
             const confirmRow = confirmResult.recordset?.[0];
@@ -418,9 +504,9 @@ router.post('/confirm', verifyToken, async (req, res) => {
             .input('userId', sql.Int, userId)
             .input('subTotal', sql.Numeric(12, 2), paymentSubTotal)
             .input('currency', sql.NVarChar(50), 'NGN')
-            .input('gatewayStatus', sql.NVarChar(50), gatewayMessage)
-            .input('gatewayProvider', sql.NVarChar(50), gatewayProvider)
-            .input('gatewayTransactionId', sql.NVarChar(255), gatewayTransactionId)
+            .input('gatewayStatus', sql.NVarChar(50), verifiedPayment.status)
+            .input('gatewayProvider', sql.NVarChar(50), 'paystack')
+            .input('gatewayTransactionId', sql.NVarChar(255), String(verifiedPayment.id))
             .input('gatewayReference', sql.NVarChar(255), gatewayReference)
             .input('serviceFee', sql.Numeric(12, 2), serviceFee)
             .input('VAT', sql.Numeric(12, 2), vat)

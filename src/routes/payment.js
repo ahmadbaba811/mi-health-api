@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { pool, sql } = require('../db');
 const { verifyToken } = require('../middleware/auth');
 const https = require('https')
 
@@ -25,6 +24,9 @@ router.post("/initialize", verifyToken, async (req, res) => {
         const params = JSON.stringify({
             email: req.body.email,
             amount: Math.round(amount * 100),
+            metadata: {
+                userId: String(req.user.userId),
+            },
         });
 
         const options = {
@@ -71,6 +73,7 @@ router.post("/initialize", verifyToken, async (req, res) => {
         paystackReq.write(params);
         paystackReq.end();
     } catch (error) {
+        console.log(error)
         return res.status(500).json({
             success: false,
             message: "Failed to initialize payment",
