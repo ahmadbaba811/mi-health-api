@@ -275,35 +275,12 @@ router.post("/microsoft", async (req, res) => {
 
   try {
     const profile = await verifyMicrosoftIdToken(token)
-    console.log(profile)
     await completeOAuthSignIn(res, profile)
   } catch (error) {
     console.error("Microsoft sign-in failed:", error.message)
     res.status(401).json({ error: 'Microsoft sign in failed' })
   }
 })
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
