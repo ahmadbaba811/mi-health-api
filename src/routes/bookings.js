@@ -1035,4 +1035,128 @@ router.get('/results/:userId', verifyToken, async (req, res) => {
 });
 
 
+// GET /reviews - look up any reviews already submitted for a booking ref + email
+router.get("/reviews", async (req, res) => {
+    const { ref, email } = req.query
+
+    if (!ref || !email) {
+        return res.status(400).json({ error: "ref and email are required" })
+    }
+
+    try {
+        const reviews = await pool.request()
+            .input('ref', sql.VarChar, ref)
+            .input('email', sql.VarChar, email)
+            .query(`SELECT * FROM lab_reviews WHERE bookingRef=@ref AND reviewerId=@email`)
+
+        const reviewsRes = reviews.recordset
+        return res.json({ reviewsRes })
+    } catch (error) {
+        console.error("GET /reviews failed:", error)
+        return res.status(500).json({ error: "Failed to fetch reviews" })
+    }
+})
+
+// POST /reviews - upsert one review per lab for a booking ref + email
+router.post("/reviews", async (req, res) => {
+    const { ref, email, reviews, userId } = req.body
+
+    if (!ref || !email || !Array.isArray(reviews) || reviews.length === 0) {
+        return res.status(400).json({ error: "ref, email and reviews[] are required" })
+    }
+
+    const invalidRating = reviews.some(
+        (r) => typeof r.rating !== "number" || r.rating < 0 || r.rating > 5
+    )
+    if (invalidRating) {
+        return res.status(400).json({ error: "Each review rating must be a number between 0 and 5" })
+    }
+
+    try {
+        // Validate the reviewer actually owns this booking before accepting reviews.
+        const booking = await pool.request()
+            .input('ref', sql.VarChar, ref)
+            .input('userId', sql.Int, userId)
+            .query(`SELECT * FROM bookings WHERE ref=@ref AND userId=@userId`)
+
+        if (booking.recordset.length === 0) {
+            return res.status(403).json({ error: "Booking not found for this reference" })
+        }
+
+        const rev = reviews[0];
+
+        const request = pool.request();
+
+        request.input('reviewerId', sql.VarChar, email);
+        request.input('reviewRating', sql.Decimal(6, 2), rev.rating);
+        request.input('reviewerComment', sql.VarChar, rev.comment);
+        request.input('labId', sql.Int, rev.labId);
+        request.input('bookingRef', sql.VarChar, ref);
+
+        const saved = await request.query(`
+                IF EXISTS (
+                    SELECT 1
+                    FROM lab_reviews
+                    WHERE reviewerId = @reviewerId
+                    AND labId = @labId
+                    AND bookingRef = @bookingRef
+                )
+                    BEGIN
+                        UPDATE lab_reviews
+                        SET
+                            reviewRating = @reviewRating,
+                            reviewerComment = @reviewerComment,
+                            reviewDate = GETDATE()
+                        WHERE reviewerId = @reviewerId
+                        AND labId = @labId
+                        AND bookingRef = @bookingRef;
+
+                        SELECT *
+                        FROM lab_reviews
+                        WHERE reviewerId = @reviewerId
+                        AND labId = @labId
+                        AND bookingRef = @bookingRef;
+                    END
+                ELSE
+                BEGIN
+                    INSERT INTO lab_reviews (
+                        reviewerId,
+                        reviewRating,
+                        reviewerComment,
+                        labId,
+                        bookingRef
+                    )
+                    VALUES 
+                    (
+                        @reviewerId,
+                        @reviewRating,
+                        @reviewerComment,
+                        @labId,
+                        @bookingRef
+                    );
+                END;
+
+                -- Update the lab's average rating
+                UPDATE labs
+                SET rating = (
+                    SELECT AVG(CAST(reviewRating AS DECIMAL(10,2)))
+                    FROM lab_reviews
+                    WHERE labId = @labId
+                )
+                WHERE id = @labId;
+
+            `);
+
+        return res.json({
+            success: true,
+            review: []
+        });
+    } catch (error) {
+        console.error("POST /reviews failed:", error)
+        return res.status(500).json({ error: "Failed to save reviews" })
+    }
+})
+
+
+
 module.exports = router;

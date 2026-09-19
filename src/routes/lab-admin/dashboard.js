@@ -258,17 +258,17 @@ router.get('/bookings', verifyAdmin, async (req, res) => {
             if (booking.addOns !== "") {
                 const addOnsResult = await pool.request()
                     .input('labId', sql.Int, labId)
-                    .query(`SELECT addOnId, name, description, price, 1 as isLabAddable FROM lab_add_ons WHERE labId = @labId
-                                        AND addonId IN (${booking.addOns})`
-                    );
-
-                    // .query(`select * from (
-                    //                     SELECT addOnId, name, description, price, 1 as isLabAddable FROM lab_add_ons WHERE labId = @labId
-                    //                     UNION
-                    //                     SELECT id as addonId, name, description, price, isLabAddable FROM lk_add_ons WHERE isLabAddable = 0
-                    //                 ) as addOns
-                    //                     WHERE addonId IN (${booking.addOns})`
+                    // .query(`SELECT addOnId, name, description, price, 1 as isLabAddable FROM lab_add_ons WHERE labId = @labId
+                    //                     AND addonId IN (${booking.addOns})`
                     // );
+
+                    .query(`select * from (
+                                        SELECT addOnId, name, description, price, 1 as isLabAddable FROM lab_add_ons WHERE labId = @labId
+                                        UNION
+                                        SELECT id as addonId, name, description, price, isLabAddable FROM lk_add_ons WHERE isLabAddable = 0
+                                    ) as addOns
+                                        WHERE addonId IN (${booking.addOns})`
+                    );
                 booking.addOnsList = addOnsResult.recordset
             }
         }

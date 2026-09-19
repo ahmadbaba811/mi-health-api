@@ -185,6 +185,80 @@ router.patch('/update', verifyAdmin, async (req, res) => {
 
 
 
+// GET /test-result/comment?bookingId=&labId= - fetch a result + patient/lab context for the doctor share page
+router.get("/result-comments/:bookingId/:labId", async (req, res) => {
+
+    const { bookingId, labId } = req.params
+
+    if (!bookingId || !labId) {
+        return res.status(400).json({ error: "bookingId and labId are required" })
+    }
+
+    try {
+
+        const result = await pool.request()
+            .input("bookingId", sql.Int, bookingId)
+            .input("labId", sql.Int, labId)
+            .query(`
+        SELECT TOP 1
+          tr.id, tr.bookingId, tr.labId, tr.fileUrl, tr.fileType, tr.fileSizeBytes,
+          tr.testComments, tr.commentsBy, tr.commentsDate, tr.createdAt, tr.createdBy,
+          b.ref AS bookingRef,
+          (u.firstName + ' ' + u.lastName) AS patientName,
+          u.email AS patientEmail,
+          l.name AS labName
+        FROM test_results tr
+        JOIN bookings b ON b.id = tr.bookingId
+        JOIN users u ON u.id = b.userId
+        JOIN labs l ON l.id = tr.labId
+        WHERE tr.bookingId = @bookingId AND tr.labId = @labId
+      `)
+
+        const row = result.recordset[0]
+        if (!row) {
+            return res.status(404).json({ error: "Test result not found" })
+        }
+
+        return res.json({ result: row })
+    } catch (error) {
+        console.error("GET /test-result/comment failed:", error)
+        return res.status(500).json({ error: "Failed to fetch test result" })
+    }
+})
+
+// POST /test-result/comment - save the doctor's commentary against the result row
+router.post("/doctors-comment", async (req, res) => {
+    const { bookingId, labId, testComments, commentsBy } = req.body
+
+    if (!bookingId || !labId || !testComments || !commentsBy) {
+        return res.status(400).json({ error: "bookingId, labId, testComments and commentsBy are required" })
+    }
+
+    try {
+        const result = await pool.request()
+            .input("bookingId", sql.Int, bookingId)
+            .input("labId", sql.Int, labId)
+            .input("testComments", sql.NVarChar(sql.MAX), testComments)
+            .input("commentsBy", sql.NVarChar(255), commentsBy)
+            .query(`
+        UPDATE test_results
+        SET testComments = @testComments, commentsBy = @commentsBy, commentsDate = GETDATE()
+        WHERE bookingId = @bookingId AND labId = @labId
+      `)
+
+        if (result.rowsAffected[0] === 0) {
+            return res.status(404).json({ error: "Test result not found" })
+        }
+
+        return res.json({ success: true })
+    } catch (error) {
+        console.error("POST /test-result/comment failed:", error)
+        return res.status(500).json({ error: "Failed to save commentary" })
+    }
+})
+
+
+
 
 
 module.exports = router;

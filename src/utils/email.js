@@ -64,7 +64,7 @@ async function sendEmail({ to, subject, html, bcc, attachment = null }) {
     await transporter.sendMail(mailOptions);
 
     // Delete attachment after successful email
-    if (attachment) {
+    if (attachment.remove === true) {
         const filePath = attachmentPath(attachment.url)
 
         try {
