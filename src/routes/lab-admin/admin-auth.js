@@ -269,11 +269,11 @@ router.patch("/password-lab-admins/:id", verifyAdmin, async (req, res) => {
   
 
   if (!currentPassword || !newPassword) {
-    return res.status(400).json({ error: "currentPassword and newPassword are required" })
+    return res.status(400).json({ error: "current password and new password are required" })
   }
 
   if (String(newPassword).length < 8) {
-    return res.status(400).json({ error: "newPassword must be at least 8 characters" })
+    return res.status(400).json({ error: "new password must be at least 8 characters" })
   }
 
   if (String(adminId) !== String(id)) {
