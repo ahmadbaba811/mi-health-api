@@ -199,9 +199,10 @@ router.get('/lab-admins', verifyAdmin, async (_req, res) => {
   try {
     const request = pool.request();
     const result = await request.query(`
-      SELECT id, labId, firstName, lastName, email, isActive, createdAt
-      FROM lab_admins where isActive = 1
-      ORDER BY createdAt DESC
+      SELECT a.id, a.labId, a.firstName, a.lastName, a.email, a.isActive, a.createdAt, b.name
+      FROM lab_admins a inner join labs b on a.labId = b.id
+      where a.isActive = 1
+      ORDER BY a.createdAt DESC
     `);
     res.json(result.recordset);
   } catch (err) {
@@ -318,6 +319,27 @@ router.delete('/lab-admins/:id', verifyAdmin, async (req, res) => {
   }
 });
 
+router.patch('/lab-admins/reset-password/:id', verifyAdmin, async (req, res) => {
+  const { id } = req.params
+  const { newPassword } = req.body
+
+
+  try {
+    const hashed = await bcrypt.hash(newPassword, 10)
+
+    const request = pool.request();;
+    request.input('email', sql.VarChar, id);
+    request.input('passwordHash', sql.NVarChar(500), hashed);
+
+    await request.query('UPDATE lab_admins SET passwordHash = @passwordHash WHERE email = @email');
+    res.json({ success: true, id: req.params.id });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+
 // GET LABS
 router.get('/onboarding', verifyAdmin, async (_req, res) => {
   try {
@@ -368,7 +390,7 @@ router.get('/onboarding/:labId', verifyAdmin, async (req, res) => {
     `);
 
     let lab_admins = await request.query(`
-      SELECT id, labId, firstName, lastName, email, phone, role, isActive, createdAt FROM lab_admins WHERE labId = @labId AND isSuper IS NULL
+      SELECT id, labId, firstName, lastName, email, phone, role, isActive, createdAt FROM lab_admins WHERE labId = @labId 
     `);
 
     labs = labs.recordset
@@ -567,7 +589,7 @@ router.get('/billing', verifyAdmin, async (_req, res) => {
 
 router.get("/services", async (_req, res) => {
   try {
-    
+
     const result = await pool.request().query(`
       SELECT
         [id],
@@ -596,7 +618,7 @@ router.post("/services", async (req, res) => {
   }
 
   try {
-    
+
     const result = await pool
       .request()
       .input("name", sql.NVarChar(200), String(name).trim())
@@ -625,7 +647,7 @@ router.patch("/services/:id", async (req, res) => {
   const { name, category, description, isActive } = req.body || {}
 
   try {
-    
+
     const result = await pool
       .request()
       .input("id", sql.Int, id)
@@ -666,7 +688,7 @@ router.delete("/services/:id", async (req, res) => {
   }
 
   try {
-    
+
     const result = await pool
       .request()
       .input("id", sql.Int, id)
@@ -689,7 +711,7 @@ router.delete("/services/:id", async (req, res) => {
 
 router.get("/add-ons", async (_req, res) => {
   try {
-    
+
     const result = await pool.request().query(`
       SELECT
         [idx],
@@ -710,61 +732,61 @@ router.get("/add-ons", async (_req, res) => {
 })
 
 router.post("/add-ons", async (req, res) => {
-  
-    const {
-        addOnId,
-        name,
-        price,
-        requiresScheduling,
-        description,
-        isActive,
-        isLabAddable
-    } = req.body || {};
 
-    if (!String(name || "").trim()) {
-        return res.status(400).json({ message: "Name is required." });
-    }
+  const {
+    addOnId,
+    name,
+    price,
+    requiresScheduling,
+    description,
+    isActive,
+    isLabAddable
+  } = req.body || {};
 
-    if (!String(addOnId || "").trim()) {
-        return res.status(400).json({ message: "Add-on ID is required." });
-    }
+  if (!String(name || "").trim()) {
+    return res.status(400).json({ message: "Name is required." });
+  }
 
-    try {
-        const request = pool.request()
-            .input("addOnId", sql.NVarChar(100), String(addOnId).trim())
-            .input("name", sql.NVarChar(200), String(name).trim());
+  if (!String(addOnId || "").trim()) {
+    return res.status(400).json({ message: "Add-on ID is required." });
+  }
 
-        // Check whether the add-on ID or name already exists
-        const existing = await request.query(`
+  try {
+    const request = pool.request()
+      .input("addOnId", sql.NVarChar(100), String(addOnId).trim())
+      .input("name", sql.NVarChar(200), String(name).trim());
+
+    // Check whether the add-on ID or name already exists
+    const existing = await request.query(`
             SELECT id, [name]
             FROM lk_add_ons
             WHERE id = @addOnId
                OR [name] = @name;
         `);
 
-        if (existing.recordset.length > 0) {
-            const duplicate = existing.recordset[0];
+    if (existing.recordset.length > 0) {
+      const duplicate = existing.recordset[0];
 
-            if (String(duplicate.id) === String(addOnId).trim()) {
-                return res.status(409).json({
-                    message: "An add-on with this ID already exists."
-                });
-            }
+      if (String(duplicate.id) === String(addOnId).trim()) {
+        return res.status(409).json({
+          message: "An add-on with this ID already exists."
+        });
+      }
 
-            return res.status(409).json({
-                message: "An add-on with this name already exists."
-            });
-        }
+      return res.status(409).json({
+        message: "An add-on with this name already exists."
+      });
+    }
 
-        const result = await pool.request()
-            .input("addOnId", sql.NVarChar(100), String(addOnId).trim())
-            .input("name", sql.NVarChar(200), String(name).trim())
-            .input("price", sql.Decimal(18, 2), toNumber(price, 0))
-            .input("requiresScheduling", sql.Bit, toBit(requiresScheduling, false))
-            .input("description", sql.NVarChar(sql.MAX), String(description || "").trim() || null)
-            .input("isActive", sql.Bit, toBit(isActive, true))
-            .input("isLabAddable", sql.Bit, toBit(isLabAddable, false) )
-            .query(`
+    const result = await pool.request()
+      .input("addOnId", sql.NVarChar(100), String(addOnId).trim())
+      .input("name", sql.NVarChar(200), String(name).trim())
+      .input("price", sql.Decimal(18, 2), toNumber(price, 0))
+      .input("requiresScheduling", sql.Bit, toBit(requiresScheduling, false))
+      .input("description", sql.NVarChar(sql.MAX), String(description || "").trim() || null)
+      .input("isActive", sql.Bit, toBit(isActive, true))
+      .input("isLabAddable", sql.Bit, toBit(isLabAddable, false))
+      .query(`
                 INSERT INTO lk_add_ons
                     (id, [name], [price], [requiresScheduling], [description], [isActive], [isLabAddable])
                 OUTPUT INSERTED.*
@@ -772,16 +794,16 @@ router.post("/add-ons", async (req, res) => {
                     (@addOnId, @name, @price, @requiresScheduling, @description, @isActive, @isLabAddable);
             `);
 
-        return res.status(201).json(result.recordset[0]);
+    return res.status(201).json(result.recordset[0]);
 
-    } catch (error) {
-        console.error(error);
+  } catch (error) {
+    console.error(error);
 
-        return res.status(500).json({
-            message: "Failed to create add-on.",
-            error: error.message
-        });
-    }
+    return res.status(500).json({
+      message: "Failed to create add-on.",
+      error: error.message
+    });
+  }
 });
 
 router.patch("/add-ons/:id", async (req, res) => {
@@ -793,7 +815,7 @@ router.patch("/add-ons/:id", async (req, res) => {
   const { name, price, requiresScheduling, description, isActive } = req.body || {}
 
   try {
-    
+
     const result = await pool
       .request()
       .input("idx", sql.Int, id)
