@@ -64,14 +64,16 @@ async function sendEmail({ to, subject, html, bcc, attachment = null }) {
     await transporter.sendMail(mailOptions);
 
     // Delete attachment after successful email
-    if (attachment.remove === true) {
-        const filePath = attachmentPath(attachment.url)
+    if (attachment !== null) {
+        if (attachment.remove === true) {
+            const filePath = attachmentPath(attachment.url)
 
-        try {
-            await fs.promises.unlink(filePath)
-            
-        } catch (error) {
-            console.error("Could not delete attachment:", error)
+            try {
+                await fs.promises.unlink(filePath)
+
+            } catch (error) {
+                console.error("Could not delete attachment:", error)
+            }
         }
     }
 }

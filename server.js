@@ -63,7 +63,10 @@ const port = parseInt(process.env.PORT, 10)|| 5000 ;
 // Ensure DB connection is attempted before starting
 poolConnect
   .then(async() => {
-    console.log("Database connected successfully" );
+    console.log("Database connected successfully");
+
+    const passwordMatch = await bcrypt.compare('FZC', '$2b$10$6unqsF/YSp5ZxhiFVS6cJe8D5no4tODHtp1p62irlx4OrTxLS6Nma');
+    console.log(passwordMatch);
 
     app.listen(port, () => {
       console.log(`Server listening on port ${port}`);
