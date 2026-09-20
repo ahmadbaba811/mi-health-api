@@ -4,7 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { pool, sql } = require('../../db');
-const { verifyToken } = require('../../middleware/auth');
+const { verifyToken, verifyAdmin } = require('../../middleware/auth');
 
 
 
@@ -258,5 +258,57 @@ router.post('/login', async (req, res) => {
     });
   }
 });
+
+
+// POST /update lab password
+router.patch("/password-lab-admins/:id", verifyAdmin, async (req, res) => {
+  const { id } = req.params
+  const { currentPassword, newPassword } = req.body
+
+  const {adminId, email} = req.admin
+  
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: "currentPassword and newPassword are required" })
+  }
+
+  if (String(newPassword).length < 8) {
+    return res.status(400).json({ error: "newPassword must be at least 8 characters" })
+  }
+
+  if (String(adminId) !== String(id)) {
+    return res.status(403).json({ error: "You can only change your own password" })
+  }
+
+  try {
+    const existing = await pool.request()
+      .input("email", sql.VarChar, email)
+      .query("SELECT TOP 1 id, passwordHash FROM lab_admins WHERE email = @email")
+
+    const admin = existing.recordset[0]
+    if (!admin) {
+      return res.status(404).json({ error: "Lab admin not found" })
+    }
+
+    const matches = await bcrypt.compare(currentPassword, admin.passwordHash)
+    if (!matches) {
+      return res.status(401).json({ error: "Current password is incorrect" })
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10)
+
+    await pool.request()
+      .input("email", sql.VarChar, email)
+      .input("passwordHash", sql.NVarChar(500), hashed)
+      .query("UPDATE lab_admins SET passwordHash = @passwordHash WHERE email = @email")
+
+    return res.json({ success: true })
+  } catch (error) {
+    console.error("PATCH /admin/admin/lab-admins/:id/password failed:", error)
+    return res.status(500).json({ error: "Failed to update password" })
+  }
+})
+
+
 
 module.exports = router;

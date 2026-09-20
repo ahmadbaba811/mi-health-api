@@ -4,6 +4,8 @@ const helmet = require('helmet');
 const cors = require('cors');
 const { pool, poolConnect, sql } = require('./src/db');
 const configureSecurity  = require('./src/utils/headers')
+const bcrypt = require('bcrypt');
+
 
 const usersRouter = require('./src/routes/users');
 const authRouter = require('./src/routes/auth');
@@ -60,8 +62,8 @@ const port = parseInt(process.env.PORT, 10)|| 5000 ;
 
 // Ensure DB connection is attempted before starting
 poolConnect
-  .then(() => {
-    console.log("Database connected successfully");
+  .then(async() => {
+    console.log("Database connected successfully" );
 
     app.listen(port, () => {
       console.log(`Server listening on port ${port}`);
